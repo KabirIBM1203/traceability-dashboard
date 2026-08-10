@@ -1,25 +1,23 @@
 from fastapi import FastAPI
 
-from app.services.databricks_service import DatabricksService
+from app.api.features import router as features_router
+
 
 app = FastAPI(title="Traceability Dashboard API")
 
-db = DatabricksService()
+
+app.include_router(features_router)
 
 
 @app.get("/")
 def root():
-    return {"application": "Traceability Dashboard API"}
+    return {
+        "application": "Traceability Dashboard API"
+    }
 
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
-
-
-@app.get("/db-test")
-def db_test():
-
-    result = db.execute_query("SELECT CURRENT_TIMESTAMP()")
-
-    return result
+    return {
+        "status": "healthy"
+    }

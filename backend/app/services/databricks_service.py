@@ -1,23 +1,48 @@
-from app.core.databricks_client import get_connection
+from pathlib import Path
+
+from databricks import sql
+
+from app.core.config import SERVER_HOSTNAME, HTTP_PATH
 
 
 class DatabricksService:
 
-    def execute_query(self, query: str):
+    def get_connection(self):
+        return sql.connect(
+            server_hostname=SERVER_HOSTNAME,
+            http_path=HTTP_PATH,
+            auth_type="databricks-oauth",
+        )
 
-        with get_connection() as connection:
+    def test_connection(self):
+        with self.get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT CURRENT_TIMESTAMP()")
+                return cursor.fetchall()
 
+    def get_features(self):
+
+        sql_file = (
+            Path(__file__).resolve().parents[1]
+            / "queries"
+            / "features.sql"
+        )
+
+        query = sql_file.read_text(encoding="utf-8")
+
+        with self.get_connection() as connection:
             with connection.cursor() as cursor:
 
                 cursor.execute(query)
 
-                columns = [col[0] for col in cursor.description]
-
                 rows = cursor.fetchall()
 
-                result = [
-                    dict(zip(columns, row))
-                    for row in rows
+                columns = [
+                    column[0]
+                    for column in cursor.description
                 ]
 
-                return result
+        return [
+            dict(zip(columns, row))
+            for row in rows
+        ]
