@@ -7,10 +7,10 @@ class RevTracService:
 
     def __init__(self):
         # revtrac_service.py
-        #   -> services
-        #   -> app
-        #   -> backend
-        #   -> traceability-dashboard
+        # -> services
+        # -> app
+        # -> backend
+        # -> traceability-dashboard
         self.project_root = Path(__file__).resolve().parents[3]
 
         self.reference_file = (
@@ -37,11 +37,13 @@ class RevTracService:
                 sheet_name="Sheet1"
             )
 
+            # Normalize reference values once
             self._reference_df["Ref Value"] = (
                 self._reference_df["Ref Value"]
                 .fillna("")
                 .astype(str)
                 .str.strip()
+                .str.upper()
             )
 
         return self._reference_df
@@ -53,43 +55,89 @@ class RevTracService:
                 sheet_name="Sheet1"
             )
 
+            # Normalize RevTrac request number
+            self._transport_df["_revtrac_key"] = (
+                self._transport_df["Rev-Trac request"]
+                .apply(self._normalize_revtrac_number)
+            )
+
         return self._transport_df
 
-    def get_revtrac_for_feature(self, issue_key: str):
+    def get_revtrac_for_feature(
+        self,
+        issue_key: str,
+        ritm: str | None = None
+    ):
         """
         Find RevTrac requests associated with a JIRA feature.
 
-        V1 uses the direct DCRTB reference from the
-        RevTrac Reference export.
+        Matching strategy:
+
+        1. Search RevTrac reference export using DCRTB issue key.
+        2. Search using the RITM.
+        3. Combine both results.
+        4. Remove duplicate RevTrac requests.
+        5. Find all transports belonging to each RevTrac request.
         """
 
         reference_df = self._load_reference()
         transport_df = self._load_transports()
 
-        issue_key = issue_key.strip().upper()
+        issue_key = self._normalize_reference_value(issue_key)
+        ritm = self._normalize_reference_value(ritm)
+
+        # ---------------------------------------------------------
+        # Find references using BOTH DCRTB and RITM
+        # ---------------------------------------------------------
+
+        lookup_values = {
+            value
+            for value in [issue_key, ritm]
+            if value
+        }
+
+        if not lookup_values:
+            return []
 
         matches = reference_df[
-            reference_df["Ref Value"]
-            .str.upper()
-            .eq(issue_key)
-        ]
+            reference_df["Ref Value"].isin(lookup_values)
+        ].copy()
+
+        # ---------------------------------------------------------
+        # Collect unique RevTrac requests
+        # ---------------------------------------------------------
+
+        revtrac_numbers = []
+
+        for value in matches["Rev-Trac request"]:
+
+            normalized = self._normalize_revtrac_number(value)
+
+            if normalized is not None:
+                revtrac_numbers.append(normalized)
+
+        # Remove duplicates while preserving order
+        revtrac_numbers = list(dict.fromkeys(revtrac_numbers))
 
         revtrac_requests = []
 
-        for _, row in matches.iterrows():
+        # ---------------------------------------------------------
+        # Build RevTrac -> Transport hierarchy
+        # ---------------------------------------------------------
 
-            revtrac_number = row["Rev-Trac request"]
+        for revtrac_number in revtrac_numbers:
 
-            if pd.isna(revtrac_number):
-                continue
+            # All reference rows belonging to this RevTrac
+            revtrac_reference_rows = matches[
+                matches["Rev-Trac request"].apply(
+                    self._normalize_revtrac_number
+                )
+                == revtrac_number
+            ]
 
-            try:
-                revtrac_number = int(revtrac_number)
-            except (ValueError, TypeError):
-                continue
-
+            # All transports belonging to this RevTrac
             transports = transport_df[
-                transport_df["Rev-Trac request"] == revtrac_number
+                transport_df["_revtrac_key"] == revtrac_number
             ].copy()
 
             transport_list = []
@@ -120,37 +168,86 @@ class RevTracService:
                     ),
                 })
 
+            # Use first reference row as the RevTrac metadata
+            row = revtrac_reference_rows.iloc[0]
+
             revtrac_requests.append({
                 "revtrac": revtrac_number,
+
                 "project": self._clean_value(
                     row["Project"]
                 ),
+
                 "request_type": self._clean_value(
                     row["Request type"]
                 ),
+
                 "class": self._clean_value(
                     row["Class"]
                 ),
+
                 "team": self._clean_value(
                     row["Team"]
                 ),
+
                 "status": self._clean_value(
                     row["Status"]
                 ),
+
                 "title": self._clean_value(
                     row["Title"]
                 ),
-                "references": self._clean_value(
-                    row["Ref Text"]
-                ),
+
+                "references": [
+                    {
+                        "ref_type": self._clean_value(
+                            ref_row["Ref Type"]
+                        ),
+                        "ref_value": self._clean_value(
+                            ref_row["Ref Value"]
+                        ),
+                        "ref_text": self._clean_value(
+                            ref_row["Ref Text"]
+                        ),
+                    }
+                    for _, ref_row in revtrac_reference_rows.iterrows()
+                ],
+
                 "transports": transport_list,
             })
 
         return revtrac_requests
 
     @staticmethod
-    def _clean_value(value):
+    def _normalize_reference_value(value):
+
+        if value is None:
+            return ""
+
         if pd.isna(value):
+            return ""
+
+        return (
+            str(value)
+            .strip()
+            .upper()
+        )
+
+    @staticmethod
+    def _normalize_revtrac_number(value):
+
+        if value is None or pd.isna(value):
+            return None
+
+        try:
+            return int(float(value))
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _clean_value(value):
+
+        if value is None or pd.isna(value):
             return None
 
         if isinstance(value, pd.Timestamp):

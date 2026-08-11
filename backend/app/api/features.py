@@ -9,6 +9,7 @@ router = APIRouter(
     tags=["Features"]
 )
 
+
 db_service = DatabricksService()
 revtrac_service = RevTracService()
 
@@ -29,17 +30,7 @@ def get_feature(issue_key: str):
     its RevTrac and transport details.
     """
 
-    features = db_service.get_features()
-
-    feature = next(
-        (
-            item
-            for item in features
-            if str(item.get("issue_key", "")).upper()
-            == issue_key.upper()
-        ),
-        None,
-    )
+    feature = db_service.get_feature(issue_key)
 
     if feature is None:
         raise HTTPException(
@@ -48,7 +39,10 @@ def get_feature(issue_key: str):
         )
 
     feature["revtrac"] = (
-        revtrac_service.get_revtrac_for_feature(issue_key)
+        revtrac_service.get_revtrac_for_feature(
+            issue_key=issue_key,
+            ritm=feature.get("ritm"),
+        )
     )
 
     return feature
