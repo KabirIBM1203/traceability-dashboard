@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState, useCallback, memo } from "react";
 
 import { getFeature } from "../services/api";
 
@@ -9,6 +9,23 @@ import type {
 } from "../types/feature";
 
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const PAGE_SIZE = 25;
+
+type SortKey = keyof Pick<
+  Feature,
+  "issue_key" | "summary" | "status" | "stream" | "request_type" | "ritm" | "fix_version"
+>;
+type SortDir = "asc" | "desc";
+
+
+// ---------------------------------------------------------------------------
+// FeatureTable (top-level)
+// ---------------------------------------------------------------------------
+
 interface FeatureTableProps {
   features: Feature[];
 }
@@ -18,6 +35,7 @@ export default function FeatureTable({
   features,
 }: FeatureTableProps) {
 
+  // ---- expand / load state ------------------------------------------------
   const [expandedFeature, setExpandedFeature] =
     useState<string | null>(null);
 
@@ -30,114 +48,384 @@ export default function FeatureTable({
   const [errorFeature, setErrorFeature] =
     useState<string | null>(null);
 
+  // ---- search / filter state ----------------------------------------------
+  const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterStream, setFilterStream] = useState("");
+  const [filterRelease, setFilterRelease] = useState("");
 
-  async function handleFeatureClick(issueKey: string) {
+  // ---- sort state ---------------------------------------------------------
+  const [sortKey, setSortKey] = useState<SortKey>("issue_key");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-    // Clicking the already-open feature collapses it
-    if (expandedFeature === issueKey) {
-      setExpandedFeature(null);
-      return;
-    }
-
-    setExpandedFeature(issueKey);
-    setErrorFeature(null);
-
-    // Don't call backend again if we've already loaded it
-    if (detailsCache[issueKey]) {
-      return;
-    }
-
-    try {
-
-      setLoadingFeature(issueKey);
-
-      const details = await getFeature(issueKey);
-
-      setDetailsCache((previous) => ({
-        ...previous,
-        [issueKey]: details,
-      }));
-
-    } catch (error) {
-
-      console.error(
-        `Failed to load ${issueKey}`,
-        error
-      );
-
-      setErrorFeature(issueKey);
-
-    } finally {
-
-      setLoadingFeature(null);
-
-    }
-  }
+  // ---- pagination state ---------------------------------------------------
+  const [page, setPage] = useState(1);
 
 
+  // ---- derive unique filter options ---------------------------------------
+  const statusOptions = useMemo(
+    () => uniqueSorted(features.map((f) => f.status)),
+    [features]
+  );
+  const streamOptions = useMemo(
+    () => uniqueSorted(features.map((f) => f.stream)),
+    [features]
+  );
+  const releaseOptions = useMemo(
+    () => uniqueSorted(features.map((f) => f.fix_version)),
+    [features]
+  );
+
+
+  // ---- filtered + sorted + paginated slice --------------------------------
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+
+    return features.filter((f) => {
+      if (filterStatus && f.status !== filterStatus) return false;
+      if (filterStream && f.stream !== filterStream) return false;
+      if (filterRelease && f.fix_version !== filterRelease) return false;
+
+      if (q) {
+        const haystack = [
+          f.issue_key,
+          f.summary,
+          f.ritm,
+          f.stream,
+          f.status,
+          f.fix_version,
+          f.request_type,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        if (!haystack.includes(q)) return false;
+      }
+
+      return true;
+    });
+  }, [features, search, filterStatus, filterStream, filterRelease]);
+
+
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const av = (a[sortKey] ?? "").toString().toLowerCase();
+      const bv = (b[sortKey] ?? "").toString().toLowerCase();
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [filtered, sortKey, sortDir]);
+
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+
+  const pageSlice = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return sorted.slice(start, start + PAGE_SIZE);
+  }, [sorted, safePage]);
+
+
+  // ---- handlers -----------------------------------------------------------
+  const handleSort = useCallback(
+    (key: SortKey) => {
+      if (key === sortKey) {
+        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      } else {
+        setSortKey(key);
+        setSortDir("asc");
+      }
+      setPage(1);
+    },
+    [sortKey]
+  );
+
+  const handleFilterChange = useCallback(() => {
+    setPage(1);
+  }, []);
+
+  const handleFeatureClick = useCallback(
+    async (issueKey: string) => {
+      if (expandedFeature === issueKey) {
+        setExpandedFeature(null);
+        return;
+      }
+
+      setExpandedFeature(issueKey);
+      setErrorFeature(null);
+
+      if (detailsCache[issueKey]) return;
+
+      try {
+        setLoadingFeature(issueKey);
+        const details = await getFeature(issueKey);
+        setDetailsCache((prev) => ({ ...prev, [issueKey]: details }));
+      } catch (err) {
+        console.error(`Failed to load ${issueKey}`, err);
+        setErrorFeature(issueKey);
+      } finally {
+        setLoadingFeature(null);
+      }
+    },
+    [expandedFeature, detailsCache]
+  );
+
+  const hasActiveFilters =
+    search !== "" ||
+    filterStatus !== "" ||
+    filterStream !== "" ||
+    filterRelease !== "";
+
+
+  // ---- render -------------------------------------------------------------
   return (
-    <div className="feature-table-wrapper">
+    <div>
 
-      <table className="feature-table">
+      {/* ── Toolbar ────────────────────────────────────────────────── */}
+      <div className="toolbar">
 
-        <thead>
-          <tr>
-            <th className="expand-column"></th>
-            <th>Issue Key</th>
-            <th>Summary</th>
-            <th>Status</th>
-            <th>Stream</th>
-            <th>Request Type</th>
-            <th>RITM</th>
-            <th>Release</th>
-          </tr>
-        </thead>
+        <div className="toolbar-left">
+
+          <div className="search-wrapper">
+            <span className="search-icon">⌕</span>
+            <input
+              className="search-input"
+              type="text"
+              placeholder="Search features, RITM, status…"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                handleFilterChange();
+              }}
+            />
+            {search && (
+              <button
+                className="search-clear"
+                onClick={() => {
+                  setSearch("");
+                  handleFilterChange();
+                }}
+                aria-label="Clear search"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <select
+            className="filter-select"
+            value={filterStatus}
+            onChange={(e) => {
+              setFilterStatus(e.target.value);
+              handleFilterChange();
+            }}
+          >
+            <option value="">All Statuses</option>
+            {statusOptions.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+
+          <select
+            className="filter-select"
+            value={filterStream}
+            onChange={(e) => {
+              setFilterStream(e.target.value);
+              handleFilterChange();
+            }}
+          >
+            <option value="">All Streams</option>
+            {streamOptions.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+
+          <select
+            className="filter-select"
+            value={filterRelease}
+            onChange={(e) => {
+              setFilterRelease(e.target.value);
+              handleFilterChange();
+            }}
+          >
+            <option value="">All Releases</option>
+            {releaseOptions.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+
+          {hasActiveFilters && (
+            <button
+              className="clear-filters-btn"
+              onClick={() => {
+                setSearch("");
+                setFilterStatus("");
+                setFilterStream("");
+                setFilterRelease("");
+                setPage(1);
+              }}
+            >
+              Clear filters
+            </button>
+          )}
+
+        </div>
+
+        <span className="result-count">
+          {filtered.length === features.length
+            ? `${features.length} features`
+            : `${filtered.length} of ${features.length}`}
+        </span>
+
+      </div>
 
 
-        <tbody>
+      {/* ── Table ──────────────────────────────────────────────────── */}
+      <div className="feature-table-wrapper">
 
-          {features.map((feature) => {
+        <table className="feature-table">
 
-            const isExpanded =
-              expandedFeature === feature.issue_key;
+          <thead>
+            <tr>
+              <th className="expand-column"></th>
+              <SortTh label="Issue Key"    col="issue_key"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortTh label="Summary"      col="summary"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortTh label="Status"       col="status"       sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortTh label="Stream"       col="stream"       sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortTh label="Request Type" col="request_type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortTh label="RITM"         col="ritm"         sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortTh label="Release"      col="fix_version"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            </tr>
+          </thead>
 
-            const details =
-              detailsCache[feature.issue_key];
+          <tbody>
+            {pageSlice.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="empty-table-cell">
+                  No features match your search or filters.
+                </td>
+              </tr>
+            ) : (
+              pageSlice.map((feature) => (
+                <FeatureRows
+                  key={feature.issue_key}
+                  feature={feature}
+                  isExpanded={expandedFeature === feature.issue_key}
+                  details={detailsCache[feature.issue_key]}
+                  loading={loadingFeature === feature.issue_key}
+                  hasError={errorFeature === feature.issue_key}
+                  onClick={() => handleFeatureClick(feature.issue_key)}
+                />
+              ))
+            )}
+          </tbody>
 
-            return (
-              <FeatureRows
-                key={feature.issue_key}
-                feature={feature}
-                isExpanded={isExpanded}
-                details={details}
-                loading={
-                  loadingFeature === feature.issue_key
-                }
-                hasError={
-                  errorFeature === feature.issue_key
-                }
-                onClick={() =>
-                  handleFeatureClick(
-                    feature.issue_key
-                  )
-                }
-              />
-            );
+        </table>
 
-          })}
+      </div>
 
-        </tbody>
 
-      </table>
+      {/* ── Pagination ─────────────────────────────────────────────── */}
+      {totalPages > 1 && (
+        <div className="pagination">
+
+          <button
+            className="page-btn"
+            disabled={safePage === 1}
+            onClick={() => setPage(1)}
+            aria-label="First page"
+          >
+            «
+          </button>
+
+          <button
+            className="page-btn"
+            disabled={safePage === 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            aria-label="Previous page"
+          >
+            ‹
+          </button>
+
+          {pageNumbers(safePage, totalPages).map((n) =>
+            n === "…" ? (
+              <span key={`ellipsis-${Math.random()}`} className="page-ellipsis">…</span>
+            ) : (
+              <button
+                key={n}
+                className={`page-btn${safePage === n ? " active" : ""}`}
+                onClick={() => setPage(n as number)}
+              >
+                {n}
+              </button>
+            )
+          )}
+
+          <button
+            className="page-btn"
+            disabled={safePage === totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            aria-label="Next page"
+          >
+            ›
+          </button>
+
+          <button
+            className="page-btn"
+            disabled={safePage === totalPages}
+            onClick={() => setPage(totalPages)}
+            aria-label="Last page"
+          >
+            »
+          </button>
+
+          <span className="page-info">
+            Page {safePage} of {totalPages}
+          </span>
+
+        </div>
+      )}
 
     </div>
   );
 }
 
 
-/* =========================================================
-   Feature rows
-   ========================================================= */
+// ---------------------------------------------------------------------------
+// SortTh — sortable header cell
+// ---------------------------------------------------------------------------
+
+interface SortThProps {
+  label: string;
+  col: SortKey;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (col: SortKey) => void;
+}
+
+function SortTh({ label, col, sortKey, sortDir, onSort }: SortThProps) {
+  const active = sortKey === col;
+  return (
+    <th
+      className={`sortable-th${active ? " sort-active" : ""}`}
+      onClick={() => onSort(col)}
+      aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <span className="th-inner">
+        {label}
+        <span className="sort-indicator">
+          {active ? (sortDir === "asc" ? " ▲" : " ▼") : " ⇅"}
+        </span>
+      </span>
+    </th>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// FeatureRows
+// ---------------------------------------------------------------------------
 
 interface FeatureRowsProps {
   feature: Feature;
@@ -148,8 +436,7 @@ interface FeatureRowsProps {
   onClick: () => void;
 }
 
-
-function FeatureRows({
+const FeatureRows = memo(function FeatureRows({
   feature,
   isExpanded,
   details,
@@ -161,128 +448,81 @@ function FeatureRows({
   return (
     <>
       <tr
-        className={`feature-row ${
-          isExpanded ? "expanded" : ""
-        }`}
+        className={`feature-row${isExpanded ? " expanded" : ""}`}
         onClick={onClick}
       >
 
         <td className="expand-column">
-
           <button
             className="expand-button"
-            aria-label={
-              isExpanded
-                ? "Collapse feature"
-                : "Expand feature"
-            }
-            onClick={(event) => {
-              event.stopPropagation();
+            aria-label={isExpanded ? "Collapse feature" : "Expand feature"}
+            onClick={(e) => {
+              e.stopPropagation();
               onClick();
             }}
           >
             {isExpanded ? "▼" : "▶"}
           </button>
-
         </td>
 
+        <td className="issue-key">{feature.issue_key}</td>
 
-        <td className="issue-key">
-          {feature.issue_key}
-        </td>
-
-
-        <td className="summary-cell">
-          {feature.summary || "—"}
-        </td>
-
+        <td className="summary-cell">{feature.summary || "—"}</td>
 
         <td>
-          <span className="status-badge">
-            {feature.status || "—"}
-          </span>
+          <span className="status-badge">{feature.status || "—"}</span>
         </td>
 
+        <td>{feature.stream || "—"}</td>
 
-        <td>
-          {feature.stream || "—"}
-        </td>
+        <td>{feature.request_type || "—"}</td>
 
+        <td className="ritm-cell">{feature.ritm || "—"}</td>
 
-        <td>
-          {feature.request_type || "—"}
-        </td>
-
-
-        <td className="ritm-cell">
-          {feature.ritm || "—"}
-        </td>
-
-
-        <td>
-          {feature.fix_version || "—"}
-        </td>
+        <td>{feature.fix_version || "—"}</td>
 
       </tr>
 
 
       {isExpanded && (
-
         <tr className="feature-detail-row">
-
           <td colSpan={8}>
 
             {loading && (
-
               <div className="inline-loading">
-                Loading RevTrac and transport details...
+                Loading RevTrac and transport details…
               </div>
-
             )}
 
-
             {hasError && (
-
               <div className="inline-error">
                 Unable to load details for{" "}
                 <strong>{feature.issue_key}</strong>.
               </div>
-
             )}
 
-
             {!loading && !hasError && details && (
-
-              <InlineFeatureDetails
-                details={details}
-              />
-
+              <InlineFeatureDetails details={details} />
             )}
 
           </td>
-
         </tr>
-
       )}
 
     </>
   );
-}
+});
 
 
-/* =========================================================
-   Inline feature details
-   ========================================================= */
+// ---------------------------------------------------------------------------
+// InlineFeatureDetails
+// ---------------------------------------------------------------------------
 
 interface InlineFeatureDetailsProps {
   details: FeatureDetails;
 }
 
-
-function InlineFeatureDetails({
-  details,
-}: InlineFeatureDetailsProps) {
-
+function InlineFeatureDetails({ details }: InlineFeatureDetailsProps) {
   return (
     <div className="inline-details">
 
@@ -290,41 +530,27 @@ function InlineFeatureDetails({
 
         <div className="inline-detail-item">
           <span>RITM</span>
-          <strong>
-            {details.ritm || "—"}
-          </strong>
+          <strong>{details.ritm || "—"}</strong>
         </div>
-
 
         <div className="inline-detail-item">
           <span>Status</span>
-          <strong>
-            {details.status || "—"}
-          </strong>
+          <strong>{details.status || "—"}</strong>
         </div>
-
 
         <div className="inline-detail-item">
           <span>Stream</span>
-          <strong>
-            {details.stream || "—"}
-          </strong>
+          <strong>{details.stream || "—"}</strong>
         </div>
-
 
         <div className="inline-detail-item">
           <span>Request Type</span>
-          <strong>
-            {details.request_type || "—"}
-          </strong>
+          <strong>{details.request_type || "—"}</strong>
         </div>
-
 
         <div className="inline-detail-item">
           <span>Release</span>
-          <strong>
-            {details.fix_version || "—"}
-          </strong>
+          <strong>{details.fix_version || "—"}</strong>
         </div>
 
       </div>
@@ -333,43 +559,23 @@ function InlineFeatureDetails({
       <div className="revtrac-section-inline">
 
         <div className="section-heading-inline">
-
-          <h3>
-            RevTrac
-          </h3>
-
+          <h3>RevTrac</h3>
           <span>
             {details.revtrac.length} request
-            {details.revtrac.length !== 1
-              ? "s"
-              : ""}
+            {details.revtrac.length !== 1 ? "s" : ""}
           </span>
-
         </div>
 
-
         {details.revtrac.length === 0 ? (
-
           <div className="empty-state-inline">
-            No RevTrac request is currently
-            associated with this feature.
+            No RevTrac request is currently associated with this feature.
           </div>
-
         ) : (
-
           <div className="revtrac-list-inline">
-
             {details.revtrac.map((revtrac) => (
-
-              <RevTracCard
-                key={revtrac.revtrac}
-                revtrac={revtrac}
-              />
-
+              <RevTracCard key={revtrac.revtrac} revtrac={revtrac} />
             ))}
-
           </div>
-
         )}
 
       </div>
@@ -379,104 +585,67 @@ function InlineFeatureDetails({
 }
 
 
-/* =========================================================
-   RevTrac card
-   ========================================================= */
+// ---------------------------------------------------------------------------
+// RevTracCard
+// ---------------------------------------------------------------------------
 
 interface RevTracCardProps {
   revtrac: RevTrac;
 }
 
+function RevTracCard({ revtrac }: RevTracCardProps) {
 
-function RevTracCard({
-  revtrac,
-}: RevTracCardProps) {
-
-  const [expanded, setExpanded] =
-    useState(false);
-
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="revtrac-card-inline">
 
       <button
         className="revtrac-header-button"
-        onClick={() =>
-          setExpanded(!expanded)
-        }
+        onClick={() => setExpanded((v) => !v)}
       >
 
         <div className="revtrac-header-left">
-
-          <span className="revtrac-arrow">
-            {expanded ? "▼" : "▶"}
-          </span>
-
+          <span className="revtrac-arrow">{expanded ? "▼" : "▶"}</span>
           <div>
-
-            <span className="revtrac-label">
-              REVTRAC
-            </span>
-
-            <strong>
-              {revtrac.revtrac}
-            </strong>
-
+            <span className="revtrac-label">REVTRAC</span>
+            <strong>{revtrac.revtrac}</strong>
           </div>
-
         </div>
 
-
-        <span className="revtrac-status">
-          {revtrac.status || "—"}
-        </span>
+        <span className="revtrac-status">{revtrac.status || "—"}</span>
 
       </button>
 
 
       {expanded && (
-
         <div className="revtrac-content">
 
           <div className="revtrac-info-grid">
 
             <div>
               <span>Title</span>
-              <strong>
-                {revtrac.title || "—"}
-              </strong>
+              <strong>{revtrac.title || "—"}</strong>
             </div>
-
 
             <div>
               <span>Project</span>
-              <strong>
-                {revtrac.project || "—"}
-              </strong>
+              <strong>{revtrac.project || "—"}</strong>
             </div>
-
 
             <div>
               <span>Team</span>
-              <strong>
-                {revtrac.team || "—"}
-              </strong>
+              <strong>{revtrac.team || "—"}</strong>
             </div>
-
 
             <div>
               <span>Request Type</span>
-              <strong>
-                {revtrac.request_type || "—"}
-              </strong>
+              <strong>{revtrac.request_type || "—"}</strong>
             </div>
-
 
             <div>
               <span>Class</span>
-              <strong>
-                {revtrac.class || "—"}
-              </strong>
+              <strong>{revtrac.class || "—"}</strong>
             </div>
 
           </div>
@@ -485,32 +654,16 @@ function RevTracCard({
           <div className="transport-section-inline">
 
             <div className="transport-heading-inline">
-
-              <h4>
-                Transports
-              </h4>
-
-              <span>
-                {revtrac.transports.length}
-              </span>
-
+              <h4>Transports</h4>
+              <span>{revtrac.transports.length}</span>
             </div>
 
-
             {revtrac.transports.length === 0 ? (
-
-              <div className="no-transports-inline">
-                No transports found.
-              </div>
-
+              <div className="no-transports-inline">No transports found.</div>
             ) : (
-
               <div className="transport-table-inline">
-
                 <table>
-
                   <thead>
-
                     <tr>
                       <th>Sequence</th>
                       <th>Transport</th>
@@ -520,66 +673,74 @@ function RevTracCard({
                       <th>Release Date</th>
                       <th>Release Time</th>
                     </tr>
-
                   </thead>
-
-
                   <tbody>
-
-                    {revtrac.transports.map(
-                      (transport, index) => (
-
-                        <tr
-                          key={`${transport.transport_number}-${index}`}
-                        >
-
-                          <td>
-                            {transport.sequence || "—"}
-                          </td>
-
-                          <td className="transport-number">
-                            {transport.transport_number || "—"}
-                          </td>
-
-                          <td>
-                            {transport.category || "—"}
-                          </td>
-
-                          <td>
-                            {transport.short_text || "—"}
-                          </td>
-
-                          <td>
-                            {transport.last_changed_by || "—"}
-                          </td>
-
-                          <td>
-                            {transport.release_date || "—"}
-                          </td>
-
-                          <td>
-                            {transport.release_time || "—"}
-                          </td>
-
-                        </tr>
-
-                      )
-                    )}
-
+                    {revtrac.transports.map((transport, index) => (
+                      <tr key={`${transport.transport_number}-${index}`}>
+                        <td>{transport.sequence || "—"}</td>
+                        <td className="transport-number">
+                          {transport.transport_number || "—"}
+                        </td>
+                        <td>{transport.category || "—"}</td>
+                        <td>{transport.short_text || "—"}</td>
+                        <td>{transport.last_changed_by || "—"}</td>
+                        <td>{transport.release_date || "—"}</td>
+                        <td>{transport.release_time || "—"}</td>
+                      </tr>
+                    ))}
                   </tbody>
-
                 </table>
-
               </div>
-
             )}
 
           </div>
 
         </div>
-
       )}
 
     </div>
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function uniqueSorted(values: (string | null | undefined)[]): string[] {
+  return Array.from(
+    new Set(values.filter((v): v is string => Boolean(v)))
+  ).sort();
+}
+
+/**
+ * Produces a compact page number list like: 1 … 4 5 6 … 12
+ */
+function pageNumbers(
+  current: number,
+  total: number
+): (number | "…")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+
+  const pages: (number | "…")[] = [];
+  const addPage = (n: number) => pages.push(n);
+  const addEllipsis = () => {
+    if (pages[pages.length - 1] !== "…") pages.push("…");
+  };
+
+  addPage(1);
+
+  if (current > 3) addEllipsis();
+
+  for (let n = Math.max(2, current - 1); n <= Math.min(total - 1, current + 1); n++) {
+    addPage(n);
+  }
+
+  if (current < total - 2) addEllipsis();
+
+  addPage(total);
+
+  return pages;
 }

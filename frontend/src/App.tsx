@@ -88,10 +88,6 @@ function App() {
               Features
             </h2>
 
-            <span>
-              {features.length} features
-            </span>
-
           </div>
 
         </section>

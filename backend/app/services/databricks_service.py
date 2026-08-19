@@ -7,18 +7,23 @@ from app.core.config import SERVER_HOSTNAME, HTTP_PATH
 
 class DatabricksService:
 
-    def get_connection(self):
-        return sql.connect(
+    def __init__(self):
+        # Establish the connection once and reuse it across all
+        # requests so that the OAuth handshake (browser popup) only
+        # happens a single time at startup rather than on every call.
+        self._connection = sql.connect(
             server_hostname=SERVER_HOSTNAME,
             http_path=HTTP_PATH,
             auth_type="databricks-oauth",
         )
 
+    def get_connection(self):
+        return self._connection
+
     def test_connection(self):
-        with self.get_connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT CURRENT_TIMESTAMP()")
-                return cursor.fetchall()
+        with self._connection.cursor() as cursor:
+            cursor.execute("SELECT CURRENT_TIMESTAMP()")
+            return cursor.fetchall()
 
     def get_features(self):
 
@@ -30,17 +35,16 @@ class DatabricksService:
 
         query = sql_file.read_text(encoding="utf-8")
 
-        with self.get_connection() as connection:
-            with connection.cursor() as cursor:
+        with self._connection.cursor() as cursor:
 
-                cursor.execute(query)
+            cursor.execute(query)
 
-                rows = cursor.fetchall()
+            rows = cursor.fetchall()
 
-                columns = [
-                    column[0]
-                    for column in cursor.description
-                ]
+            columns = [
+                column[0]
+                for column in cursor.description
+            ]
 
         return [
             dict(zip(columns, row))
@@ -57,22 +61,21 @@ class DatabricksService:
 
         query = sql_file.read_text(encoding="utf-8")
 
-        with self.get_connection() as connection:
-            with connection.cursor() as cursor:
+        with self._connection.cursor() as cursor:
 
-                cursor.execute(
-                    query,
-                    (issue_key,)
-                )
+            cursor.execute(
+                query,
+                (issue_key,)
+            )
 
-                row = cursor.fetchone()
+            row = cursor.fetchone()
 
-                if row is None:
-                    return None
+            if row is None:
+                return None
 
-                columns = [
-                    column[0]
-                    for column in cursor.description
-                ]
+            columns = [
+                column[0]
+                for column in cursor.description
+            ]
 
         return dict(zip(columns, row))

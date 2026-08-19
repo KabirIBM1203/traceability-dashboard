@@ -125,14 +125,19 @@ class RevTracService:
         # Build RevTrac -> Transport hierarchy
         # ---------------------------------------------------------
 
+        # Pre-compute normalised key on the matched rows once so
+        # we can group by it cheaply instead of running .apply()
+        # inside the loop (which would be O(n²)).
+        matches = matches.copy()
+        matches["_revtrac_key"] = matches["Rev-Trac request"].apply(
+            self._normalize_revtrac_number
+        )
+
         for revtrac_number in revtrac_numbers:
 
             # All reference rows belonging to this RevTrac
             revtrac_reference_rows = matches[
-                matches["Rev-Trac request"].apply(
-                    self._normalize_revtrac_number
-                )
-                == revtrac_number
+                matches["_revtrac_key"] == revtrac_number
             ]
 
             # All transports belonging to this RevTrac
