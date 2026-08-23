@@ -37,6 +37,21 @@ dashboard_fields AS (
             'OpCo impacted',
             'RevTrac Request'
       )
+),
+
+fix_versions AS (
+    SELECT
+        imh.issue_id,
+        array_join(
+            sort_array(collect_set(v.name)),
+            ', '
+        ) AS fix_version
+    FROM heiaepgdt09pwe01.silver_jira.issue_multiselect_history imh
+    INNER JOIN heiaepgdt09pwe01.silver_jira.version v
+        ON imh.value = CAST(v.id AS STRING)
+    WHERE imh.field_id = 'fixVersions'
+      AND imh.is_active = true
+    GROUP BY imh.issue_id
 )
 
 SELECT
@@ -77,6 +92,8 @@ SELECT
         THEN fld.field_value
     END) AS revtrac_request,
 
+    fv.fix_version,
+
     df.updated
 
 FROM dcrtb_features df
@@ -87,12 +104,16 @@ LEFT JOIN dashboard_fields fld
 LEFT JOIN heiaepgdt09pwe01.silver_jira.status s
     ON df.status = s.id
 
+LEFT JOIN fix_versions fv
+    ON df.id = fv.issue_id
+
 WHERE UPPER(df.key) = UPPER(?)
 
 GROUP BY
     df.key,
     df.summary,
     s.name,
+    fv.fix_version,
     df.updated
 
 LIMIT 1

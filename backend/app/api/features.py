@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from app.models.feature import Feature
 from app.services.databricks_service import DatabricksService
 from app.services.revtrac_service import RevTracService
 
@@ -14,7 +15,7 @@ db_service = DatabricksService()
 revtrac_service = RevTracService()
 
 
-@router.get("")
+@router.get("", response_model=list[Feature])
 def get_features():
     """
     Return all DCRTB features from Databricks.
@@ -38,10 +39,13 @@ def get_feature(issue_key: str):
             detail=f"Feature {issue_key} not found"
         )
 
+    child_issue_keys = db_service.get_feature_child_issue_keys(issue_key)
+
     feature["revtrac"] = (
         revtrac_service.get_revtrac_for_feature(
             issue_key=issue_key,
             ritm=feature.get("ritm"),
+            linked_issue_keys=child_issue_keys,
         )
     )
 

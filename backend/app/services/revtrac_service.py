@@ -66,35 +66,34 @@ class RevTracService:
     def get_revtrac_for_feature(
         self,
         issue_key: str,
-        ritm: str | None = None
+        ritm: str | None = None,
+        linked_issue_keys: list[str] | None = None,
     ):
         """
         Find RevTrac requests associated with a JIRA feature.
 
         Matching strategy:
 
-        1. Search RevTrac reference export using DCRTB issue key.
+        1. Search RevTrac reference export using the feature key.
         2. Search using the RITM.
-        3. Combine both results.
-        4. Remove duplicate RevTrac requests.
-        5. Find all transports belonging to each RevTrac request.
+        3. Search using linked child issue keys such as CMD/CTB.
+        4. Combine all results.
+        5. Remove duplicate RevTrac requests.
+        6. Find all transports belonging to each RevTrac request.
         """
 
         reference_df = self._load_reference()
         transport_df = self._load_transports()
 
-        issue_key = self._normalize_reference_value(issue_key)
-        ritm = self._normalize_reference_value(ritm)
-
-        # ---------------------------------------------------------
-        # Find references using BOTH DCRTB and RITM
-        # ---------------------------------------------------------
-
         lookup_values = {
-            value
-            for value in [issue_key, ritm]
-            if value
+            self._normalize_reference_value(value)
+            for value in [issue_key, ritm, *(linked_issue_keys or [])]
+            if self._normalize_reference_value(value)
         }
+
+        # ---------------------------------------------------------
+        # Find references using feature, RITM, and linked issues
+        # ---------------------------------------------------------
 
         if not lookup_values:
             return []

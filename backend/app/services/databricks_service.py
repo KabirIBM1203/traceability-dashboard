@@ -79,3 +79,28 @@ class DatabricksService:
             ]
 
         return dict(zip(columns, row))
+
+    def get_feature_child_issue_keys(self, issue_key: str):
+
+        sql_file = (
+            Path(__file__).resolve().parents[1]
+            / "queries"
+            / "feature_child_issue_keys.sql"
+        )
+
+        query = sql_file.read_text(encoding="utf-8")
+
+        with self._connection.cursor() as cursor:
+
+            cursor.execute(
+                query,
+                (issue_key,)
+            )
+
+            rows = cursor.fetchall()
+
+        return [
+            row[0]
+            for row in rows
+            if row and row[0]
+        ]

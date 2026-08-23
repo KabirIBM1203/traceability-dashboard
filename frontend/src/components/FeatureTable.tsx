@@ -52,7 +52,7 @@ export default function FeatureTable({
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterStream, setFilterStream] = useState("");
-  const [filterRelease, setFilterRelease] = useState("");
+  const [filterFixVersion, setFilterFixVersion] = useState("");
 
   // ---- sort state ---------------------------------------------------------
   const [sortKey, setSortKey] = useState<SortKey>("issue_key");
@@ -71,7 +71,7 @@ export default function FeatureTable({
     () => uniqueSorted(features.map((f) => f.stream)),
     [features]
   );
-  const releaseOptions = useMemo(
+  const fixVersionOptions = useMemo(
     () => uniqueSorted(features.map((f) => f.fix_version)),
     [features]
   );
@@ -84,7 +84,7 @@ export default function FeatureTable({
     return features.filter((f) => {
       if (filterStatus && f.status !== filterStatus) return false;
       if (filterStream && f.stream !== filterStream) return false;
-      if (filterRelease && f.fix_version !== filterRelease) return false;
+      if (filterFixVersion && f.fix_version !== filterFixVersion) return false;
 
       if (q) {
         const haystack = [
@@ -105,7 +105,7 @@ export default function FeatureTable({
 
       return true;
     });
-  }, [features, search, filterStatus, filterStream, filterRelease]);
+  }, [features, search, filterStatus, filterStream, filterFixVersion]);
 
 
   const sorted = useMemo(() => {
@@ -175,7 +175,7 @@ export default function FeatureTable({
     search !== "" ||
     filterStatus !== "" ||
     filterStream !== "" ||
-    filterRelease !== "";
+    filterFixVersion !== "";
 
 
   // ---- render -------------------------------------------------------------
@@ -243,15 +243,15 @@ export default function FeatureTable({
 
           <select
             className="filter-select"
-            value={filterRelease}
+            value={filterFixVersion}
             onChange={(e) => {
-              setFilterRelease(e.target.value);
+              setFilterFixVersion(e.target.value);
               handleFilterChange();
             }}
           >
-            <option value="">All Releases</option>
-            {releaseOptions.map((r) => (
-              <option key={r} value={r}>{r}</option>
+            <option value="">All Fix Versions</option>
+            {fixVersionOptions.map((fixVersion) => (
+              <option key={fixVersion} value={fixVersion}>{fixVersion}</option>
             ))}
           </select>
 
@@ -262,7 +262,7 @@ export default function FeatureTable({
                 setSearch("");
                 setFilterStatus("");
                 setFilterStream("");
-                setFilterRelease("");
+                setFilterFixVersion("");
                 setPage(1);
               }}
             >
@@ -295,7 +295,7 @@ export default function FeatureTable({
               <SortTh label="Stream"       col="stream"       sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="Request Type" col="request_type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="RITM"         col="ritm"         sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortTh label="Release"      col="fix_version"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortTh label="Fix Version"  col="fix_version"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
 
@@ -549,7 +549,7 @@ function InlineFeatureDetails({ details }: InlineFeatureDetailsProps) {
         </div>
 
         <div className="inline-detail-item">
-          <span>Release</span>
+          <span>Fix Version</span>
           <strong>{details.fix_version || "—"}</strong>
         </div>
 

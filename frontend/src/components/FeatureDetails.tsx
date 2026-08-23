@@ -69,7 +69,7 @@ export default function FeatureDetails({
         </div>
 
         <div className="detail-card">
-          <span>Release</span>
+          <span>Fix Version</span>
           <strong>
             {feature.fix_version || "—"}
           </strong>
