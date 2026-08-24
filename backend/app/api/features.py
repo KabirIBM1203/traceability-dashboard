@@ -49,4 +49,8 @@ def get_feature(issue_key: str):
         )
     )
 
+    feature["release_artifacts"] = (
+        db_service.get_feature_attachments(issue_key)
+    )
+
     return feature

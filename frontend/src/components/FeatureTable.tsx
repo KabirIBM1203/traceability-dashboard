@@ -6,6 +6,8 @@ import type {
   Feature,
   FeatureDetails,
   RevTrac,
+  ReleaseArtifacts,
+  JiraAttachment,
 } from "../types/feature";
 
 
@@ -556,6 +558,10 @@ function InlineFeatureDetails({ details }: InlineFeatureDetailsProps) {
       </div>
 
 
+      {/* ── Release Artifacts ─────────────────────────────────────── */}
+      <ReleaseArtifactsSection artifacts={details.release_artifacts} />
+
+
       <div className="revtrac-section-inline">
 
         <div className="section-heading-inline">
@@ -579,6 +585,133 @@ function InlineFeatureDetails({ details }: InlineFeatureDetailsProps) {
         )}
 
       </div>
+
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// ReleaseArtifactsSection
+// ---------------------------------------------------------------------------
+
+const ARTIFACT_LABELS: Record<string, string> = {
+  tr_bundle:    "TR Bundle",
+  uat_sign_off: "UAT Sign-off",
+  fut_ut:       "FUT / UT Document",
+  release_notes:"Release Notes",
+};
+
+interface ReleaseArtifactsSectionProps {
+  artifacts: ReleaseArtifacts;
+}
+
+function ReleaseArtifactsSection({ artifacts }: ReleaseArtifactsSectionProps) {
+  const [showFiles, setShowFiles] = useState(false);
+
+  const { checklist, attachments } = artifacts;
+  const allPresent = Object.values(checklist).every(Boolean);
+  const presentCount = Object.values(checklist).filter(Boolean).length;
+
+  return (
+    <div className="artifacts-section">
+
+      <div className="section-heading-inline">
+        <h3>Release Artifacts</h3>
+        <span className={allPresent ? "artifacts-count-ok" : "artifacts-count-missing"}>
+          {presentCount} / 4
+        </span>
+      </div>
+
+      {/* Checklist */}
+      <div className="artifacts-checklist">
+        {(Object.keys(ARTIFACT_LABELS) as Array<keyof typeof checklist>).map((key) => {
+          const present = checklist[key];
+          return (
+            <div
+              key={key}
+              className={`artifact-item ${present ? "artifact-present" : "artifact-missing"}`}
+            >
+              <span className="artifact-icon">{present ? "✓" : "✗"}</span>
+              <span className="artifact-label">{ARTIFACT_LABELS[key]}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* All attachments toggle */}
+      {attachments.length > 0 && (
+        <div className="artifacts-files">
+          <button
+            className="artifacts-toggle"
+            onClick={() => setShowFiles((v) => !v)}
+          >
+            {showFiles ? "▼" : "▶"} {attachments.length} attachment
+            {attachments.length !== 1 ? "s" : ""} on this issue
+          </button>
+
+          {showFiles && (
+            <div className="artifacts-file-list">
+              {attachments.map((att) => (
+                <AttachmentRow key={att.attachment_id ?? att.filename} attachment={att} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {attachments.length === 0 && (
+        <p className="artifacts-none">No attachments found on this issue.</p>
+      )}
+
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// AttachmentRow
+// ---------------------------------------------------------------------------
+
+interface AttachmentRowProps {
+  attachment: JiraAttachment;
+}
+
+function AttachmentRow({ attachment }: AttachmentRowProps) {
+  const name = attachment.label || attachment.filename || "(unnamed)";
+  const tags = attachment.artifact_types;
+
+  return (
+    <div className="attachment-row">
+
+      <div className="attachment-info">
+        {attachment.content_url ? (
+          <a
+            className="attachment-name"
+            href={attachment.content_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {name}
+          </a>
+        ) : (
+          <span className="attachment-name">{name}</span>
+        )}
+
+        {attachment.mime_type && (
+          <span className="attachment-mime">{attachment.mime_type}</span>
+        )}
+      </div>
+
+      {tags.length > 0 && (
+        <div className="attachment-tags">
+          {tags.map((t) => (
+            <span key={t} className="attachment-tag">
+              {ARTIFACT_LABELS[t] ?? t}
+            </span>
+          ))}
+        </div>
+      )}
 
     </div>
   );

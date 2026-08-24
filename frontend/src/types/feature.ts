@@ -30,6 +30,38 @@ export interface Feature {
   fix_version: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Release artifacts
+// ---------------------------------------------------------------------------
+
+export interface ReleaseArtifactChecklist {
+  tr_bundle: boolean;
+  uat_sign_off: boolean;
+  fut_ut: boolean;
+  release_notes: boolean;
+}
+
+export interface JiraAttachment {
+  attachment_id: number | null;
+  filename: string | null;
+  label: string | null;
+  media_type: string | null;
+  mime_type: string | null;
+  file_size: number | null;
+  author_id: string | null;
+  created: string | null;
+  content_url: string | null;
+  thumbnail_url: string | null;
+  /** Which required artifact types this file satisfies */
+  artifact_types: string[];
+}
+
+export interface ReleaseArtifacts {
+  checklist: ReleaseArtifactChecklist;
+  attachments: JiraAttachment[];
+}
+
 export interface FeatureDetails extends Feature {
   revtrac: RevTrac[];
+  release_artifacts: ReleaseArtifacts;
 }
