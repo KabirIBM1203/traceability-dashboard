@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback, memo } from "react";
 
 import { getFeature } from "../services/api";
+import { useExcelExport } from "../hooks/useExcelExport";
 
 import type {
   Feature,
@@ -74,7 +75,14 @@ export default function FeatureTable({
     [features]
   );
   const fixVersionOptions = useMemo(
-    () => uniqueSorted(features.map((f) => f.fix_version)),
+    () =>
+      uniqueSorted(
+        features.flatMap((f) =>
+          f.fix_version
+            ? f.fix_version.split(",").map((v) => v.trim())
+            : []
+        )
+      ),
     [features]
   );
 
@@ -86,7 +94,12 @@ export default function FeatureTable({
     return features.filter((f) => {
       if (filterStatus && f.status !== filterStatus) return false;
       if (filterStream && f.stream !== filterStream) return false;
-      if (filterFixVersion && f.fix_version !== filterFixVersion) return false;
+      if (filterFixVersion) {
+        const versions = f.fix_version
+          ? f.fix_version.split(",").map((v) => v.trim())
+          : [];
+        if (!versions.includes(filterFixVersion)) return false;
+      }
 
       if (q) {
         const haystack = [
@@ -178,6 +191,9 @@ export default function FeatureTable({
     filterStatus !== "" ||
     filterStream !== "" ||
     filterFixVersion !== "";
+
+  // ---- excel export --------------------------------------------------------
+  const { exportToExcel, exporting } = useExcelExport(sorted, detailsCache);
 
 
   // ---- render -------------------------------------------------------------
@@ -274,11 +290,38 @@ export default function FeatureTable({
 
         </div>
 
-        <span className="result-count">
-          {filtered.length === features.length
-            ? `${features.length} features`
-            : `${filtered.length} of ${features.length}`}
-        </span>
+        <div className="toolbar-right">
+          <span className="result-count">
+            {filtered.length === features.length
+              ? `${features.length} features`
+              : `${filtered.length} of ${features.length}`}
+          </span>
+
+          <button
+            className="download-btn"
+            onClick={exportToExcel}
+            disabled={exporting || sorted.length === 0}
+            title={
+              hasActiveFilters
+                ? `Download ${sorted.length} filtered feature${sorted.length !== 1 ? "s" : ""} as Excel`
+                : `Download all ${sorted.length} features as Excel`
+            }
+          >
+            {exporting ? (
+              <>
+                <span className="download-spinner" />
+                Exporting…
+              </>
+            ) : (
+              <>
+                <span className="download-icon">↓</span>
+                {hasActiveFilters
+                  ? `Export ${sorted.length} filtered`
+                  : "Export Excel"}
+              </>
+            )}
+          </button>
+        </div>
 
       </div>
 
@@ -472,7 +515,12 @@ const FeatureRows = memo(function FeatureRows({
         <td className="summary-cell">{feature.summary || "—"}</td>
 
         <td>
-          <span className="status-badge">{feature.status || "—"}</span>
+          <span
+            className="status-badge"
+            data-status={feature.status?.toLowerCase() ?? undefined}
+          >
+            {feature.status || "—"}
+          </span>
         </td>
 
         <td>{feature.stream || "—"}</td>
