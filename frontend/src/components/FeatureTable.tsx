@@ -335,11 +335,11 @@ export default function FeatureTable({
             <tr>
               <th className="expand-column"></th>
               <SortTh label="Issue Key"    col="issue_key"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortTh label="RITM"         col="ritm"         sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="Summary"      col="summary"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="Status"       col="status"       sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="Stream"       col="stream"       sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="Request Type" col="request_type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortTh label="RITM"         col="ritm"         sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="Fix Version"  col="fix_version"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
@@ -512,6 +512,8 @@ const FeatureRows = memo(function FeatureRows({
 
         <td className="issue-key">{feature.issue_key}</td>
 
+        <td className="ritm-cell">{feature.ritm || "—"}</td>
+
         <td className="summary-cell">{feature.summary || "—"}</td>
 
         <td>
@@ -526,8 +528,6 @@ const FeatureRows = memo(function FeatureRows({
         <td>{feature.stream || "—"}</td>
 
         <td>{feature.request_type || "—"}</td>
-
-        <td className="ritm-cell">{feature.ritm || "—"}</td>
 
         <td>{feature.fix_version || "—"}</td>
 

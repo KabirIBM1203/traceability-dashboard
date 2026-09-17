@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.features import router as features_router
+from app.api.genie    import router as genie_router
 
 
 app = FastAPI(
@@ -22,6 +23,7 @@ app.add_middleware(
 
 
 app.include_router(features_router)
+app.include_router(genie_router)
 
 
 @app.get("/")

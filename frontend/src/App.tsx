@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import FeatureTable from "./components/FeatureTable";
+import AiPanel from "./components/AiPanel";
 
 import { getFeatures } from "./services/api";
 
@@ -17,6 +18,11 @@ function App() {
 
   const [error, setError] =
     useState<string | null>(null);
+
+  const [aiOpen, setAiOpen] = useState(false);
+
+  const openAi  = useCallback(() => setAiOpen(true),  []);
+  const closeAi = useCallback(() => setAiOpen(false), []);
 
 
   useEffect(() => {
@@ -74,8 +80,8 @@ function App() {
             </svg>
           </div>
           <div className="header-brand-text">
-            <h1>Traceability Dashboard</h1>
-            <p>JIRA · Release Audit</p>
+            <h1>Delivery Cockpit</h1>
+            <p>powered by Traceability AI</p>
           </div>
         </div>
 
@@ -87,7 +93,12 @@ function App() {
 
         {/* Right — actions */}
         <div className="header-actions">
-          <button className="ai-button">
+          <button
+            className={`ai-button${aiOpen ? " ai-button--active" : ""}`}
+            onClick={openAi}
+            aria-expanded={aiOpen}
+            aria-controls="ai-panel"
+          >
             ✦ Ask AI
           </button>
         </div>
@@ -122,6 +133,8 @@ function App() {
         )}
 
       </main>
+
+      <AiPanel open={aiOpen} onClose={closeAi} />
 
     </div>
 

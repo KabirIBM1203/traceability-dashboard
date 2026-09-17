@@ -29,3 +29,32 @@ export async function getFeature(
 
   return response.data;
 }
+
+
+// ---------------------------------------------------------------------------
+// Genie AI
+// ---------------------------------------------------------------------------
+
+export interface GenieResponse {
+  conversation_id: string | null;
+  message_id: string | null;
+  answer: string;
+}
+
+export async function askGenie(question: string): Promise<GenieResponse> {
+  const response = await api.post<GenieResponse>("/api/genie/ask", {
+    question,
+  });
+  return response.data;
+}
+
+export async function genieFollowup(
+  conversationId: string,
+  question: string
+): Promise<GenieResponse> {
+  const response = await api.post<GenieResponse>("/api/genie/followup", {
+    conversation_id: conversationId,
+    question,
+  });
+  return response.data;
+}

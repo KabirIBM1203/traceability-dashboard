@@ -206,9 +206,28 @@ export function useExcelExport(
         .replace("T", "_")
         .replace(/:/g, "-");
 
-      const filename = `DCRTB_Traceability_${ts}.xlsx`;
+      const filename = `ReleaseCockpit_${ts}.xlsx`;
 
-      XLSX.writeFile(wb, filename);
+      // XLSX.writeFile relies on Node's `fs` which is absent in the browser.
+      // Use XLSX.write() with type:"array" and trigger a download via a
+      // temporary Blob URL — the standard browser-safe approach.
+      const wbArray: Uint8Array = XLSX.write(wb, {
+        bookType: "xlsx",
+        type: "array",
+      });
+
+      const blob = new Blob([wbArray], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
 
     } finally {
       setExporting(false);
