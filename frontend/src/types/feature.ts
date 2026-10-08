@@ -61,7 +61,18 @@ export interface ReleaseArtifacts {
   attachments: JiraAttachment[];
 }
 
+export interface QTestLink {
+  link_id: number | null;
+  relationship: string | null;
+  title: string | null;
+  url: string | null;
+  summary: string | null;
+  application_type: string | null;
+  application_name: string | null;
+}
+
 export interface FeatureDetails extends Feature {
   revtrac: RevTrac[];
   release_artifacts: ReleaseArtifacts;
+  qtest_links: QTestLink[];
 }

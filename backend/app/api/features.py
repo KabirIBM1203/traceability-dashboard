@@ -56,16 +56,19 @@ async def get_feature(issue_key: str):
 
     ritm = feature.get("ritm")
 
-    # ── Step 2: fire child-keys, RevTrac, and attachments in parallel ──
+    # ── Step 2: fire child-keys, attachments, and qtest in parallel ──
     child_keys_future = loop.run_in_executor(
         _executor, db_service.get_feature_child_issue_keys, issue_key
     )
     attachments_future = loop.run_in_executor(
         _executor, db_service.get_feature_attachments, issue_key
     )
+    qtest_future = loop.run_in_executor(
+        _executor, db_service.get_qtest_links, issue_key
+    )
 
-    # Child keys must be known before the RevTrac call, but we can
-    # overlap attachments with both while waiting.
+    # Child keys must be known before RevTrac, but attachments and
+    # qtest can overlap with everything while we wait.
     child_issue_keys = await child_keys_future
 
     revtrac_future = loop.run_in_executor(
@@ -77,12 +80,14 @@ async def get_feature(issue_key: str):
         ),
     )
 
-    revtrac_data, release_artifacts = await asyncio.gather(
+    revtrac_data, release_artifacts, qtest_links = await asyncio.gather(
         revtrac_future,
         attachments_future,
+        qtest_future,
     )
 
     feature["revtrac"] = revtrac_data
     feature["release_artifacts"] = release_artifacts
+    feature["qtest_links"] = qtest_links
 
     return feature

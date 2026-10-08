@@ -9,6 +9,7 @@ import type {
   RevTrac,
   ReleaseArtifacts,
   JiraAttachment,
+  QTestLink,
 } from "../types/feature";
 
 
@@ -606,6 +607,9 @@ function InlineFeatureDetails({ details }: InlineFeatureDetailsProps) {
       </div>
 
 
+      {/* ── qTest Links ───────────────────────────────────────────── */}
+      <QTestLinksSection links={details.qtest_links} />
+
       {/* ── Release Artifacts ─────────────────────────────────────── */}
       <ReleaseArtifactsSection artifacts={details.release_artifacts} />
 
@@ -633,6 +637,64 @@ function InlineFeatureDetails({ details }: InlineFeatureDetailsProps) {
         )}
 
       </div>
+
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// QTestLinksSection
+// ---------------------------------------------------------------------------
+
+interface QTestLinksSectionProps {
+  links: QTestLink[];
+}
+
+function QTestLinksSection({ links }: QTestLinksSectionProps) {
+  return (
+    <div className="qtest-section">
+
+      <div className="section-heading-inline">
+        <h3>qTest Links</h3>
+        <span>{links.length} link{links.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      {links.length === 0 ? (
+        <div className="empty-state-inline">
+          No qTest links are associated with this feature.
+        </div>
+      ) : (
+        <div className="qtest-link-list">
+          {links.map((link) => (
+            <div key={link.link_id ?? link.url} className="qtest-link-row">
+
+              <div className="qtest-link-main">
+                {link.url ? (
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="qtest-link-title"
+                  >
+                    {link.title || link.url}
+                  </a>
+                ) : (
+                  <span className="qtest-link-title">{link.title || "—"}</span>
+                )}
+                {link.relationship && (
+                  <span className="qtest-link-rel">{link.relationship}</span>
+                )}
+              </div>
+
+              {link.summary && (
+                <p className="qtest-link-summary">{link.summary}</p>
+              )}
+
+            </div>
+          ))}
+        </div>
+      )}
 
     </div>
   );

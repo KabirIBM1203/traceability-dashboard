@@ -852,6 +852,65 @@ a.attachment-name:hover { text-decoration: underline; }
 }
 
 /* =========================================================
+   qTest links
+   ========================================================= */
+
+.qtest-section {
+  margin-bottom: 20px;
+}
+
+.qtest-link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qtest-link-row {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 12px;
+}
+
+.qtest-link-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.qtest-link-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.qtest-link-title:hover {
+  text-decoration: underline;
+}
+
+span.qtest-link-title {
+  color: var(--text);
+}
+
+.qtest-link-rel {
+  font-size: 11px;
+  background: #e8f4fd;
+  color: #0969da;
+  padding: 2px 7px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.qtest-link-summary {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* =========================================================
    RevTrac cards
    ========================================================= */
 

@@ -219,3 +219,27 @@ class DatabricksService:
             "checklist": checklist,
             "attachments": attachments,
         }
+
+    def get_qtest_links(self, issue_key: str):
+        """
+        Return all qTest / Tricentis remote links attached to the given
+        JIRA feature issue key.
+        """
+
+        sql_file = (
+            Path(__file__).resolve().parents[1]
+            / "queries"
+            / "feature_qtest_links.sql"
+        )
+
+        query = sql_file.read_text(encoding="utf-8")
+
+        with self._connection.cursor() as cursor:
+
+            cursor.execute(query, (issue_key,))
+
+            rows = cursor.fetchall()
+
+            columns = [column[0] for column in cursor.description]
+
+        return [dict(zip(columns, row)) for row in rows]
