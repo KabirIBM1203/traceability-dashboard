@@ -48,6 +48,31 @@ export async function askGenie(question: string): Promise<GenieResponse> {
   return response.data;
 }
 
+// ---------------------------------------------------------------------------
+// TR Lookup
+// ---------------------------------------------------------------------------
+
+export interface TrLookupRow {
+  tr: string;
+  owner: string | null;
+  short_description: string | null;
+  workstream: string | null;
+  ticket: string | null;           // e.g. "RITM: RITM4740979"
+  ticket_source: string | null;    // which stage resolved it
+  feature_status: string | null;
+  opco: string | null;
+}
+
+export async function uploadTrLookup(file: File): Promise<TrLookupRow[]> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await api.post<TrLookupRow[]>("/api/tr-lookup", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+}
+
+
 export async function genieFollowup(
   conversationId: string,
   question: string

@@ -220,6 +220,61 @@ class DatabricksService:
             "attachments": attachments,
         }
 
+    def lookup_features_by_tokens(self, tokens: list[str]) -> dict[str, dict]:
+        """
+        Batch-resolve tokens to their DCRTB feature.
+
+        A token may be a DCRTB key, a child key (CMD-/CTB-/... resolved via
+        its parent chain to the DCRTB feature) or a ServiceNow RITM.
+
+        Returns {TOKEN_UPPER: feature_dict}. When a token maps to several
+        features the closest one (fewest parent hops) wins. Tokens are sent
+        in chunks so a large upload costs a handful of queries.
+        """
+
+        tokens = sorted({t.strip().upper() for t in tokens if t and t.strip()})
+
+        if not tokens:
+            return {}
+
+        sql_file = (
+            Path(__file__).resolve().parents[1]
+            / "queries"
+            / "tr_lookup_by_ritm.sql"
+        )
+
+        template = sql_file.read_text(encoding="utf-8")
+
+        chunk_size = 200
+        found: dict[str, dict] = {}
+
+        for start in range(0, len(tokens), chunk_size):
+
+            chunk = tokens[start:start + chunk_size]
+
+            query = template.replace(
+                "__TOKENS__", ", ".join(["?"] * len(chunk))
+            )
+
+            with self._connection.cursor() as cursor:
+
+                cursor.execute(query, tuple(chunk))
+
+                rows = cursor.fetchall()
+
+                columns = [column[0] for column in cursor.description]
+
+            for row in rows:
+                record = dict(zip(columns, row))
+                token = str(record.pop("matched_key")).strip().upper()
+                depth = record.pop("depth")
+                best = found.get(token)
+                if best is None or depth < best["_depth"]:
+                    record["_depth"] = depth
+                    found[token] = record
+
+        return found
+
     def get_qtest_links(self, issue_key: str):
         """
         Return all qTest / Tricentis remote links attached to the given

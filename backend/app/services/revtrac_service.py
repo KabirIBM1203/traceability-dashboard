@@ -1,6 +1,61 @@
 from pathlib import Path
+import re
 
 import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# Ticket-extraction patterns, grouped in tiers (highest preference first)
+#
+#   ritm   RITM                      - the answer we want
+#   story  DCRTB / CMD / CTB         - walked up to the DCRTB feature's RITM
+#   other  CHG, INC, DMD0, DBBT, PRICINGPRO, any other JIRA-style key (ABC-123)
+#   snum   S-number (S 8000015349)   - weakest signal
+# ---------------------------------------------------------------------------
+
+RITM, STORY, OTHER, SNUM = "ritm", "story", "other", "snum"
+
+_TICKET_PATTERNS: list[tuple[str, str, re.Pattern]] = [
+    (RITM,  "RITM",   re.compile(r"(?<![A-Za-z0-9])(RITM\d+)",       re.IGNORECASE)),
+    (STORY, "DCRTB",  re.compile(r"(?<![A-Za-z0-9])(DCRTB-\d+)",     re.IGNORECASE)),
+    (STORY, "CMD",    re.compile(r"(?<![A-Za-z0-9])(CMD-\d+)",       re.IGNORECASE)),
+    (STORY, "CTB",    re.compile(r"(?<![A-Za-z0-9])(CTB-\d+)",       re.IGNORECASE)),
+    (OTHER, "CHG",    re.compile(r"(?<![A-Za-z0-9])(CHG\d+)",        re.IGNORECASE)),
+    (OTHER, "INC",    re.compile(r"(?<![A-Za-z0-9])(INC\d+)",        re.IGNORECASE)),
+    (OTHER, "DMD0",   re.compile(r"(?<![A-Za-z0-9])(DMD0-?\d+)",     re.IGNORECASE)),
+    (OTHER, "DBBT",   re.compile(r"(?<![A-Za-z0-9])(DBBT-\d+)",      re.IGNORECASE)),
+    (OTHER, "PRICINGPRO",
+                      re.compile(r"(?<![A-Za-z0-9])(PRICINGPRO-\d+)", re.IGNORECASE)),
+    (OTHER, "JIRA",   re.compile(r"(?<![A-Za-z0-9])(?!(?:DCRTB|CMD|CTB)-)([A-Z][A-Z0-9]{2,14}-\d{1,7})(?![A-Za-z0-9])")),
+    (SNUM,  "S-NUM",  re.compile(r"(?<![A-Za-z0-9])(S\s?\d{10})",    re.IGNORECASE)),
+]
+
+
+def extract_tickets(
+    texts: list[str | None],
+    tier: str,
+) -> list[tuple[str, str]]:
+    """
+    Every (ticket_type, value) of the given tier found in *texts*,
+    deduplicated and ordered by pattern priority, then by position.
+    """
+    joined = " | ".join(t for t in texts if t)
+    if not joined:
+        return []
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for pattern_tier, ticket_type, pattern in _TICKET_PATTERNS:
+        if pattern_tier != tier:
+            continue
+        for m in pattern.finditer(joined):
+            value = m.group(1).upper().replace(" ", "")
+            if ticket_type == "DMD0":
+                value = re.sub(r"^DMD0-?", "DMD0-", value)
+            if value in seen:
+                continue
+            seen.add(value)
+            found.append((ticket_type, value))
+    return found
 
 
 class RevTracService:
@@ -17,20 +72,25 @@ class RevTracService:
             self.project_root
             / "data"
             / "revtrac"
-            / "EXPORT_Reference_08082026.XLSX"
+            / "EXPORT_20261016_Reference.XLSX"
         )
 
         self.transport_file = (
             self.project_root
             / "data"
             / "revtrac"
-            / "EXPORT_TR_08082026.XLSX"
+            / "EXPORT_20261016_TR.XLSX"
         )
 
         # Load both Excel files eagerly at startup so the first API
         # request pays no cold-start penalty from pd.read_excel().
         self._reference_df = self._read_reference()
         self._transport_df = self._read_transports()
+
+        # Hash indexes for TR lookups (O(1) per TR instead of a full
+        # column scan per TR).
+        self._tr_index = self._build_tr_index()
+        self._ref_values_by_revtrac = self._build_ref_index()
 
     # ------------------------------------------------------------------
     # Internal readers (called once at __init__ time)
@@ -45,6 +105,9 @@ class RevTracService:
             .str.strip()
             .str.upper()
         )
+        df["_revtrac_key"] = df["Rev-Trac request"].apply(
+            self._normalize_revtrac_number
+        )
         return df
 
     def _read_transports(self) -> pd.DataFrame:
@@ -53,6 +116,30 @@ class RevTracService:
             self._normalize_revtrac_number
         )
         return df
+
+    def _build_tr_index(self) -> dict[str, tuple[str | None, int | None]]:
+        """{TRANSPORT_NUMBER: (short_text, revtrac_key)} - first row wins."""
+        index: dict[str, tuple[str | None, int | None]] = {}
+        df = self._transport_df
+        for number, short_text, key in zip(
+            df["Transport number"], df["Short text"], df["_revtrac_key"]
+        ):
+            number = self._normalize_reference_value(number)
+            if number and number not in index:
+                index[number] = (self._clean_value(short_text), key)
+        return index
+
+    def _build_ref_index(self) -> dict[int, list[str]]:
+        """{revtrac_key: [unique Ref Values]} preserving file order."""
+        index: dict[int, list[str]] = {}
+        df = self._reference_df
+        for key, value in zip(df["_revtrac_key"], df["Ref Value"]):
+            if key is None or pd.isna(key) or not value:
+                continue
+            values = index.setdefault(int(key), [])
+            if value not in values:
+                values.append(value)
+        return index
 
     def _load_reference(self):
         return self._reference_df
@@ -129,7 +216,7 @@ class RevTracService:
 
         # Pre-compute normalised key on the matched rows once so
         # we can group by it cheaply instead of running .apply()
-        # inside the loop (which would be O(n²)).
+        # inside the loop (which would be O(nÂ²)).
         matches = matches.copy()
         matches["_revtrac_key"] = matches["Rev-Trac request"].apply(
             self._normalize_revtrac_number
@@ -140,11 +227,11 @@ class RevTracService:
         #
         # Two-pass approach:
         #
-        # Pass 1 — build each RevTrac entry and record whether its
+        # Pass 1 â€” build each RevTrac entry and record whether its
         #   transports were matched by Short text ("explicit") or fell
         #   back to showing all transports ("fallback").
         #
-        # Pass 2 — if at least one RevTrac has explicit matches, drop
+        # Pass 2 â€” if at least one RevTrac has explicit matches, drop
         #   all fallback RevTracs.  A fallback RevTrac whose Short text
         #   does not mention any of the feature's lookup values simply
         #   references this feature at the RevTrac level without having
@@ -259,11 +346,43 @@ class RevTracService:
         for entry, used_fallback in staged:
             if any_explicit and used_fallback:
                 # This RevTrac has no dedicated transports for this
-                # feature — skip it entirely.
+                # feature â€” skip it entirely.
                 continue
             revtrac_requests.append(entry)
 
         return revtrac_requests
+
+    # ------------------------------------------------------------------
+    # TR â†’ ticket lookup  (used by the TR Lookup upload panel)
+    # ------------------------------------------------------------------
+
+    def lookup_transport(self, transport_number: str) -> dict:
+        """
+        Look up one TR in the local RevTrac exports (hash-index, O(1)).
+
+        TR -> EXPORT_TR row -> its Rev-Trac request -> that request's
+        Ref Values in EXPORT_Reference.
+
+        Returns the raw texts only; ticket extraction and prioritisation
+        live in app.api.tr_lookup:
+        {
+            "short_text": str | None,   # the TR's own Short text
+            "ref_values": list[str],    # Ref Values of its Rev-Trac request
+        }
+        """
+        entry = self._tr_index.get(
+            self._normalize_reference_value(transport_number)
+        )
+        if entry is None:
+            return {"short_text": None, "ref_values": []}
+
+        short_text, revtrac_key = entry
+
+        ref_values: list[str] = []
+        if revtrac_key is not None and not pd.isna(revtrac_key):
+            ref_values = self._ref_values_by_revtrac.get(int(revtrac_key), [])
+
+        return {"short_text": short_text, "ref_values": ref_values}
 
     @staticmethod
     def _filter_transports_by_lookup(
@@ -282,7 +401,7 @@ class RevTracService:
         The caller uses used_fallback to decide whether this RevTrac
         has dedicated transports for the feature.  If other RevTracs
         in the same result set did find matches, any fallback RevTrac
-        is dropped entirely — it carries no dedicated TRs for this
+        is dropped entirely â€” it carries no dedicated TRs for this
         feature; its reference is at the RevTrac level only.
 
         The match is case-insensitive substring search, which mirrors
@@ -291,7 +410,7 @@ class RevTracService:
           "500/50 DCRTB-437 CMD-1975 RITM4220316 DTW: MD1 ID"
         """
         if transports_df.empty or not lookup_values:
-            # Empty DF — nothing to filter; treat as explicit (no TRs).
+            # Empty DF â€” nothing to filter; treat as explicit (no TRs).
             return transports_df, False
 
         short_text_col = transports_df["Short text"].fillna("").str.upper()
@@ -304,7 +423,7 @@ class RevTracService:
         filtered = transports_df[mask]
 
         if not filtered.empty:
-            return filtered, False   # explicit match — transports confirmed
+            return filtered, False   # explicit match â€” transports confirmed
 
         # Nothing matched: fall back to showing all transports and flag it
         return transports_df, True

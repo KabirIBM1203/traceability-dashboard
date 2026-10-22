@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import FeatureTable from "./components/FeatureTable";
 import AiPanel from "./components/AiPanel";
+import TrLookupPanel from "./components/TrLookupPanel";
 
 import { getFeatures } from "./services/api";
 
@@ -19,10 +20,13 @@ function App() {
   const [error, setError] =
     useState<string | null>(null);
 
-  const [aiOpen, setAiOpen] = useState(false);
+  const [aiOpen, setAiOpen]   = useState(false);
+  const [trOpen, setTrOpen]   = useState(false);
 
   const openAi  = useCallback(() => setAiOpen(true),  []);
   const closeAi = useCallback(() => setAiOpen(false), []);
+  const openTr  = useCallback(() => setTrOpen(true),  []);
+  const closeTr = useCallback(() => setTrOpen(false), []);
 
 
   useEffect(() => {
@@ -94,6 +98,13 @@ function App() {
         {/* Right — actions */}
         <div className="header-actions">
           <button
+            className={`tr-lookup-button${trOpen ? " tr-lookup-button--active" : ""}`}
+            onClick={openTr}
+            aria-expanded={trOpen}
+          >
+            ⇄ TR Lookup
+          </button>
+          <button
             className={`ai-button${aiOpen ? " ai-button--active" : ""}`}
             onClick={openAi}
             aria-expanded={aiOpen}
@@ -135,6 +146,7 @@ function App() {
       </main>
 
       <AiPanel open={aiOpen} onClose={closeAi} />
+      <TrLookupPanel open={trOpen} onClose={closeTr} />
 
     </div>
 
