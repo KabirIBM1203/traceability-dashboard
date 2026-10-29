@@ -31,6 +31,25 @@ export async function getFeature(
 }
 
 
+// project: "DBBT" (GSIT) | "DMD0" (LSIT)
+export async function getDefects(project: string): Promise<Feature[]> {
+  const response = await api.get<Feature[]>("/api/defects", {
+    params: { project },
+  });
+  return response.data;
+}
+
+
+export async function getDefect(
+  issueKey: string
+): Promise<FeatureDetails> {
+  const response = await api.get<FeatureDetails>(
+    `/api/defects/${issueKey}`
+  );
+  return response.data;
+}
+
+
 // ---------------------------------------------------------------------------
 // Genie AI
 // ---------------------------------------------------------------------------

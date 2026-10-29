@@ -1,8 +1,6 @@
 import { useState, useCallback } from "react";
 import * as XLSX from "xlsx";
 
-import { getFeature } from "../services/api";
-
 import type { Feature, FeatureDetails, RevTrac, Transport } from "../types/feature";
 
 
@@ -18,6 +16,7 @@ interface FeatureRow {
   "Request Type":   string;
   "RITM":           string;
   "Fix Version":    string;
+  "OpCo":           string;
   // release artifacts
   "TR Bundle":        string;
   "UAT Sign-off":     string;
@@ -89,6 +88,7 @@ function buildSheets(details: FeatureDetails[]): {
       "Request Type":   str(d.request_type),
       "RITM":           str(d.ritm),
       "Fix Version":    str(d.fix_version),
+      "OpCo":           str(d.opco),
       "TR Bundle":      cl ? bool(cl.tr_bundle)    : "—",
       "UAT Sign-off":   cl ? bool(cl.uat_sign_off) : "—",
       "FUT / UT Doc":   cl ? bool(cl.fut_ut)       : "—",
@@ -150,7 +150,8 @@ function autoWidths<T extends Record<string, unknown>>(rows: T[]): XLSX.ColInfo[
 
 export function useExcelExport(
   filteredFeatures: Feature[],
-  detailsCache: Record<string, FeatureDetails>
+  detailsCache: Record<string, FeatureDetails>,
+  getDetailFn: (issueKey: string) => Promise<FeatureDetails>
 ) {
   const [exporting, setExporting] = useState(false);
 
@@ -165,7 +166,7 @@ export function useExcelExport(
 
       const fetchedPairs: [string, FeatureDetails][] = await Promise.all(
         toFetch.map(async (f) => {
-          const d = await getFeature(f.issue_key);
+          const d = await getDetailFn(f.issue_key);
           return [f.issue_key, d] as [string, FeatureDetails];
         })
       );

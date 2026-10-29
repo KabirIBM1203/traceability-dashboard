@@ -222,14 +222,15 @@ class DatabricksService:
 
     def lookup_features_by_tokens(self, tokens: list[str]) -> dict[str, dict]:
         """
-        Batch-resolve tokens to their DCRTB feature.
+        Batch-resolve tokens to their parent issue across ALL JIRA projects.
 
-        A token may be a DCRTB key, a child key (CMD-/CTB-/... resolved via
-        its parent chain to the DCRTB feature) or a ServiceNow RITM.
+        A token may be any JIRA issue key (DCRTB, DBBT, DMD0, CMD, CTB, CD1,
+        DRC, PHOENIX, PRICINGPRO, ASAPIO, ESSRM, ...) resolved via its parent
+        chain to the root issue, or a ServiceNow RITM.
 
-        Returns {TOKEN_UPPER: feature_dict}. When a token maps to several
-        features the closest one (fewest parent hops) wins. Tokens are sent
-        in chunks so a large upload costs a handful of queries.
+        Returns {TOKEN_UPPER: feature_dict} including project_key and opco.
+        When a token maps to several issues the closest one (fewest hops) wins.
+        Tokens are sent in chunks so a large upload costs a handful of queries.
         """
 
         tokens = sorted({t.strip().upper() for t in tokens if t and t.strip()})
@@ -269,11 +270,83 @@ class DatabricksService:
                 token = str(record.pop("matched_key")).strip().upper()
                 depth = record.pop("depth")
                 best = found.get(token)
-                if best is None or depth < best["_depth"]:
+
+                # Prefer the record that is strictly closer (fewer hops).
+                # At equal depth, prefer a record that has OpCo over one that
+                # doesn't — multiple issues may share the same RITM and only
+                # the DCRTB feature will have the OpCo populated.
+                if best is None:
                     record["_depth"] = depth
                     found[token] = record
+                elif depth < best["_depth"]:
+                    record["_depth"] = depth
+                    found[token] = record
+                elif depth == best["_depth"]:
+                    # Same distance — keep whichever has OpCo
+                    has_opco = bool(record.get("opco"))
+                    best_has_opco = bool(best.get("opco"))
+                    if has_opco and not best_has_opco:
+                        record["_depth"] = depth
+                        found[token] = record
 
         return found
+
+    def get_defects(self, project_key: str):
+        """
+        Return all issues for a given JIRA project key (e.g. 'DBBT' or 'DMD0').
+        Uses defects.sql with __PROJECT_KEY__ substituted at query time.
+        """
+        sql_file = (
+            Path(__file__).resolve().parents[1]
+            / "queries"
+            / "defects.sql"
+        )
+        template = sql_file.read_text(encoding="utf-8")
+        query = template.replace("__PROJECT_KEY__", project_key.upper())
+
+        with self._connection.cursor() as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            columns = [column[0] for column in cursor.description]
+
+        return [dict(zip(columns, row)) for row in rows]
+
+    def get_defect(self, issue_key: str):
+        """
+        Return a single defect row regardless of its project key.
+        """
+        sql_file = (
+            Path(__file__).resolve().parents[1]
+            / "queries"
+            / "defect.sql"
+        )
+        query = sql_file.read_text(encoding="utf-8")
+
+        with self._connection.cursor() as cursor:
+            cursor.execute(query, (issue_key,))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            columns = [column[0] for column in cursor.description]
+
+        return dict(zip(columns, row))
+
+    def get_defect_child_issue_keys(self, issue_key: str):
+        """
+        Return all direct child issue keys of a defect (no prefix filter).
+        """
+        sql_file = (
+            Path(__file__).resolve().parents[1]
+            / "queries"
+            / "defect_child_issue_keys.sql"
+        )
+        query = sql_file.read_text(encoding="utf-8")
+
+        with self._connection.cursor() as cursor:
+            cursor.execute(query, (issue_key,))
+            rows = cursor.fetchall()
+
+        return [row[0] for row in rows if row and row[0]]
 
     def get_qtest_links(self, issue_key: str):
         """

@@ -11,24 +11,30 @@ Two lookup methods feed every step:
             Ref Values in EXPORT_Reference (the TR's own short text is
             checked after the Ref Values)
 
-Resolution order per TR - first hit wins, and a RITM always beats the rest:
+Resolution order per TR — first hit wins, RITM always beats everything else:
 
-  Phase 1 - RITM
-    1. RITM found by [Desc]
-    2. RITM found by [RevTrac]
-    3. DCRTB / CMD / CTB found by [Desc], then [RevTrac]
-       -> Databricks walks the story up to its DCRTB feature
-       -> that feature's ServiceNow Id (RITM)
+  Phase 1 — RITM
+    1. RITM found directly in [Desc] or [RevTrac]
+    2. STORY key (DCRTB / CMD / CTB / CD1) found in [Desc] or [RevTrac]
+       → Databricks walks the parent chain (any project) → its RITM
 
-  Phase 2 - only once no RITM can be found
-    4. CHG / INC / DMD0 / DBBT / PRICINGPRO / other JIRA keys,
-       [Desc] first, then [RevTrac] (a key Databricks maps to a feature
-       with a RITM is replaced by that RITM)
-    5. A DCRTB feature reached in step 3 that has no ServiceNow Id
+  Phase 2 — once no RITM found via Phase 1
+    3. OTHER key (CHG / INC / DMD0 / DBBT / PRICINGPRO / ASAPIO / DRC /
+       PHOENIX / ESSRM / generic JIRA) found in [Desc] or [RevTrac]
+       → if Databricks can resolve it to a RITM, use that
+    4. First trusted OTHER key shown as-is with whatever enrichment
+       Databricks can provide (status / opco)
+
+  Phase 3 — exhaustive fallback, only if still unresolved
+    5. Re-scan [Desc] then [RevTrac] for ANY recognisable key not yet tried
+       and query Databricks one more time.  Prefer keys that Databricks
+       resolves to a RITM; otherwise surface the best key found.
+
+  Phase 4 — last resort
     6. S-number from [Desc]
 
-One batched Databricks call serves the whole upload; every RITM that is
-found is also enriched with status / OpCo / stream.
+One batched Databricks call covers Phases 1+2+3; every resolved ticket is
+enriched with status / stream / OpCo from JIRA.
 
 Response: one row per uploaded TR, in upload order, with
   tr, owner, short_description, workstream, ticket, ticket_source,
@@ -53,9 +59,17 @@ router = APIRouter(
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
-# Phase-2 types shown even when Databricks does not know them. Generic
-# JIRA-style matches (e.g. "UTF-8") are only trusted if Databricks does.
-_TRUSTED_OTHER_TYPES = {"CHG", "INC", "DMD0", "DBBT", "PRICINGPRO"}
+# Trusted OTHER types: shown as-is even when Databricks doesn't know them.
+# Generic JIRA-style matches (e.g. "UTF-8") are only surfaced if Databricks
+# confirms them.
+_TRUSTED_OTHER_TYPES = {
+    "CHG", "INC", "DMD0", "DBBT", "PRICINGPRO",
+    "ASAPIO", "DRC", "PHOENIX", "ESSRM",
+}
+
+# These types are authoritative when found directly in RevTrac ref values —
+# they beat any RITM found in the short description text.
+_REVTRAC_AUTHORITATIVE = {"CHG", "INC"}
 
 
 def _candidates(row: dict, tier: str) -> list[tuple[str, str, str]]:
@@ -79,14 +93,48 @@ def _candidates(row: dict, tier: str) -> list[tuple[str, str, str]]:
     return found
 
 
+def _all_candidates(row: dict) -> list[tuple[str, str, str]]:
+    """
+    All (ticket_type, value, source) across ALL tiers in priority order,
+    deduplicated. Used for Phase 3 exhaustive re-scan.
+    """
+    seen: set[str] = set()
+    result: list[tuple[str, str, str]] = []
+    for tier in (RITM, STORY, OTHER):
+        for t_type, value, source in _candidates(row, tier):
+            if value not in seen:
+                seen.add(value)
+                result.append((t_type, value, source))
+    return result
+
+
 def _enrich(row: dict, feature: dict) -> None:
     row["feature_status"] = feature.get("status")
     row["workstream"] = row["workstream"] or feature.get("stream")
-    row["opco"] = feature.get("opco_impacted") or feature.get("requesting_opco")
+    # SQL now returns a single 'opco' column (COALESCE of all variants)
+    row["opco"] = (
+        feature.get("opco")
+        or feature.get("opco_impacted")
+        or feature.get("requesting_opco")
+    )
 
 
 def _set(row: dict, t_type: str, value: str, source: str) -> None:
     row.update(ticket_type=t_type, ticket=value, ticket_source=source)
+
+
+def _type_from_value(value: str) -> str:
+    """
+    Derive the correct ticket type from the value itself.
+    The 'ServiceNow Id' JIRA field can hold CHG/INC numbers as well as RITMs,
+    so we must not blindly label them all 'RITM'.
+    """
+    v = value.upper()
+    if v.startswith("CHG"):
+        return "CHG"
+    if v.startswith("INC"):
+        return "INC"
+    return "RITM"
 
 
 def _resolve_all(items: list[dict]) -> list[dict]:
@@ -107,80 +155,195 @@ def _resolve_all(items: list[dict]) -> list[dict]:
             "_tr_text":          rt["short_text"],
         })
 
-    # Candidates per tier, and the tokens Databricks has to resolve.
+    # ---- Build candidate lists and collect all tokens for Databricks --------
     tokens: set[str] = set()
     for row in rows:
         row["_ritm"]  = _candidates(row, RITM)
         row["_story"] = _candidates(row, STORY)
         row["_other"] = _candidates(row, OTHER)
-        for tier in ("_ritm", "_story", "_other"):
-            tokens.update(v for _, v, _ in row[tier] if tier != "_other" or "-" in v)
+        # RITM/STORY always sent; OTHER sent if JIRA-style (has hyphen) OR trusted
+        # (CHG/INC have no hyphen but still need Databricks for OpCo enrichment)
+        for tier in ("_ritm", "_story"):
+            tokens.update(v for _, v, _ in row[tier])
+        for t_type, v, _ in row["_other"]:
+            if "-" in v or t_type in _TRUSTED_OTHER_TYPES:
+                tokens.add(v)
 
     features = db_service.lookup_features_by_tokens(list(tokens))
 
     for row in rows:
-        story_fallback = None   # (feature, source): DCRTB feature without RITM
+        story_fallback = None   # (feature, source): feature found but no RITM
 
-        # ---- Phase 1: RITM ------------------------------------------------
-        # 1 + 2. A RITM from [Desc], else from [RevTrac]
-        if row["_ritm"]:
+        # ==============================================================
+        # Pre-Phase — CHG/INC in RevTrac ref values beats everything.
+        # If the transport is directly linked to a change/incident record
+        # in RevTrac, surface it as CHG/INC regardless of any RITM that
+        # might appear in the uploaded description text.
+        # ==============================================================
+        revtrac_authoritative = None
+        for t_type, value, source in _candidates(row, OTHER):
+            if t_type in _REVTRAC_AUTHORITATIVE and source in (
+                "revtrac_ref_value", "transport_short_text"
+            ):
+                revtrac_authoritative = (t_type, value, source)
+                break
+
+        if revtrac_authoritative:
+            _set(row, *revtrac_authoritative)
+            # CHG/INC have no hyphen but are now in the token set — look them up directly
+            feature = features.get(revtrac_authoritative[1].upper())
+            if feature:
+                _enrich(row, feature)
+
+        # ==============================================================
+        # Phase 1 — RITM
+        # ==============================================================
+
+        # 1. Direct RITM in [Desc] or [RevTrac]
+        if not row["ticket"] and row["_ritm"]:
             _set(row, *row["_ritm"][0])
             feature = features.get(row["ticket"])
             if feature:
                 _enrich(row, feature)
 
-        # 3. Stories -> parent DCRTB feature -> its RITM
-        else:
+        # 2. STORY key → parent chain → RITM  (DCRTB, CMD, CTB, CD1, ...)
+        elif not row["ticket"]:
             for _, value, source in row["_story"]:
                 feature = features.get(value)
                 if not feature:
                     continue
                 if feature.get("ritm"):
-                    _set(row, "RITM", feature["ritm"], "databricks_parent_feature")
+                    ritm_val = feature["ritm"]
+                    _set(row, _type_from_value(ritm_val), ritm_val, "databricks_parent_feature")
                     _enrich(row, feature)
                     break
                 if story_fallback is None:
-                    story_fallback = (feature, value)
+                    story_fallback = (feature, source)
 
-        # ---- Phase 2: no RITM could be found --------------------------------
-        # 4. CHG / INC / DMD0 / DBBT / PRICINGPRO / other keys
-        #    First any key Databricks can turn into a RITM, then the first
-        #    trusted key as-is.
+        # ==============================================================
+        # Phase 2 — OTHER keys
+        # ==============================================================
+
+        # 3. OTHER key that Databricks can promote to a RITM
         if not row["ticket"]:
-            for _, value, _ in row["_other"]:
-                feature = features.get(value) if "-" in value else None
+            for t_type, value, _ in row["_other"]:
+                in_db = "-" in value or t_type in _TRUSTED_OTHER_TYPES
+                feature = features.get(value.upper()) if in_db else None
                 if feature and feature.get("ritm"):
-                    _set(row, "RITM", feature["ritm"], "databricks_extra_key")
+                    ritm_val = feature["ritm"]
+                    _set(row, _type_from_value(ritm_val), ritm_val, "databricks_extra_key")
                     _enrich(row, feature)
                     break
+
+        # 4. First trusted OTHER key as-is, enriched if Databricks knows it
         if not row["ticket"]:
             for t_type, value, source in row["_other"]:
                 if t_type in _TRUSTED_OTHER_TYPES:
                     _set(row, t_type, value, source)
+                    in_db = "-" in value or t_type in _TRUSTED_OTHER_TYPES
+                    feature = features.get(value.upper()) if in_db else None
+                    if feature:
+                        _enrich(row, feature)
                     break
 
-        # 5. DCRTB feature without a ServiceNow Id
+        # ==============================================================
+        # Phase 3 — exhaustive re-scan across ALL tiers
+        # Re-check every key we extracted (RITM/STORY/OTHER) against
+        # the Databricks results.  This catches cases where e.g. a
+        # DRC-123 key wasn't tried earlier because it fell below a
+        # trusted-but-unresolvable key.
+        # ==============================================================
+        if not row["ticket"]:
+            all_cands = _all_candidates(row)
+            # 3a. Any candidate Databricks can resolve to a RITM
+            for t_type, value, _ in all_cands:
+                in_db = "-" in value or t_type in _TRUSTED_OTHER_TYPES
+                feature = features.get(value.upper()) if in_db else None
+                if feature and feature.get("ritm"):
+                    ritm_val = feature["ritm"]
+                    _set(row, _type_from_value(ritm_val), ritm_val, "databricks_exhaustive")
+                    _enrich(row, feature)
+                    break
+            # 3b. Any candidate Databricks knows (even without a RITM)
+            if not row["ticket"]:
+                for t_type, value, source in all_cands:
+                    in_db = "-" in value or t_type in _TRUSTED_OTHER_TYPES
+                    feature = features.get(value.upper()) if in_db else None
+                    if feature:
+                        _set(row, t_type or feature.get("project_key", "JIRA"),
+                             value, f"{source}_exhaustive")
+                        _enrich(row, feature)
+                        break
+            # 3c. Any trusted OTHER key not yet surfaced
+            if not row["ticket"]:
+                for t_type, value, source in all_cands:
+                    if t_type in _TRUSTED_OTHER_TYPES:
+                        _set(row, t_type, value, f"{source}_exhaustive")
+                        break
+
+        # ==============================================================
+        # Phase 2 continued — story fallback (feature exists, no RITM)
+        # ==============================================================
         if not row["ticket"] and story_fallback:
-            feature, value = story_fallback
-            _set(row, "DCRTB", feature["issue_key"], "databricks_parent_feature")
+            feature, source = story_fallback
+            _set(row, feature.get("project_key", "DCRTB"),
+                 feature["issue_key"], "databricks_parent_feature")
             _enrich(row, feature)
 
-        # 6. Weak S-number from the uploaded description
+        # ==============================================================
+        # Phase 4 — S-number last resort
+        # ==============================================================
         if not row["ticket"]:
             found = extract_tickets([row["short_description"]], SNUM)
             if found:
                 _set(row, *found[0], "excel_short_description")
 
+    # ==============================================================
+    # OpCo fallback pass — for every resolved row still missing an
+    # OpCo, look up the matched JIRA issue key directly using
+    # get_feature() / get_defect() (the proven single-issue queries).
+    # Deduplicated so each unique issue key is fetched at most once.
+    # ==============================================================
+    opco_missing = [row for row in rows if row["ticket"] and not row["opco"]]
+    if opco_missing:
+        # Map each row to its JIRA issue key and build a deduplicated cache
+        opco_cache: dict[str, str | None] = {}
+        for row in opco_missing:
+            ticket_val = row["ticket"]
+            feature = features.get(ticket_val.upper()) if ticket_val else None
+            issue_key = feature.get("issue_key") if feature else None
+            if not issue_key and ticket_val and "-" in ticket_val:
+                issue_key = ticket_val.upper()
+            row["_fallback_key"] = issue_key
+            if issue_key and issue_key not in opco_cache:
+                opco_cache[issue_key] = None  # placeholder
+
+        # Fetch opco for each unique issue key (get_feature covers DCRTB;
+        # get_defect covers DBBT/DMD0 and any other project)
+        for issue_key in list(opco_cache):
+            detail = db_service.get_feature(issue_key)
+            opco_val = detail.get("opco") if detail else None
+            if not opco_val:
+                detail = db_service.get_defect(issue_key)
+                opco_val = detail.get("opco") if detail else None
+            opco_cache[issue_key] = opco_val
+
+        for row in opco_missing:
+            fk = row.pop("_fallback_key", None)
+            if fk and not row["opco"]:
+                row["opco"] = opco_cache.get(fk)
+
     output = []
     for row in rows:
         t_type = row.pop("ticket_type")
-        for key in ("_ref_values", "_tr_text", "_ritm", "_story", "_other"):
-            row.pop(key)
+        for key in ("_ref_values", "_tr_text", "_ritm", "_story", "_other", "_fallback_key"):
+            row.pop(key, None)
         if t_type and row["ticket"]:
             row["ticket"] = f"{t_type}: {row['ticket']}"
         output.append(row)
 
     return output
+
 
 @router.post("")
 async def tr_lookup(file: UploadFile = File(...)):

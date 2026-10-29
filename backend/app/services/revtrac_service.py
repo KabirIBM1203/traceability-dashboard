@@ -18,15 +18,20 @@ RITM, STORY, OTHER, SNUM = "ritm", "story", "other", "snum"
 _TICKET_PATTERNS: list[tuple[str, str, re.Pattern]] = [
     (RITM,  "RITM",   re.compile(r"(?<![A-Za-z0-9])(RITM\d+)",       re.IGNORECASE)),
     (STORY, "DCRTB",  re.compile(r"(?<![A-Za-z0-9])(DCRTB-\d+)",     re.IGNORECASE)),
-    (STORY, "CMD",    re.compile(r"(?<![A-Za-z0-9])(CMD-\d+)",       re.IGNORECASE)),
-    (STORY, "CTB",    re.compile(r"(?<![A-Za-z0-9])(CTB-\d+)",       re.IGNORECASE)),
-    (OTHER, "CHG",    re.compile(r"(?<![A-Za-z0-9])(CHG\d+)",        re.IGNORECASE)),
-    (OTHER, "INC",    re.compile(r"(?<![A-Za-z0-9])(INC\d+)",        re.IGNORECASE)),
-    (OTHER, "DMD0",   re.compile(r"(?<![A-Za-z0-9])(DMD0-?\d+)",     re.IGNORECASE)),
-    (OTHER, "DBBT",   re.compile(r"(?<![A-Za-z0-9])(DBBT-\d+)",      re.IGNORECASE)),
+    (STORY, "CMD",    re.compile(r"(?<![A-Za-z0-9])(CMD-\d+)",        re.IGNORECASE)),
+    (STORY, "CTB",    re.compile(r"(?<![A-Za-z0-9])(CTB-\d+)",        re.IGNORECASE)),
+    (STORY, "CD1",    re.compile(r"(?<![A-Za-z0-9])(CD1-\d+)",        re.IGNORECASE)),
+    (OTHER, "CHG",       re.compile(r"(?<![A-Za-z0-9])(CHG\d+)",           re.IGNORECASE)),
+    (OTHER, "INC",       re.compile(r"(?<![A-Za-z0-9])(INC\d+)",           re.IGNORECASE)),
+    (OTHER, "DMD0",      re.compile(r"(?<![A-Za-z0-9])(DMD0-?\d+)",        re.IGNORECASE)),
+    (OTHER, "DBBT",      re.compile(r"(?<![A-Za-z0-9])(DBBT-\d+)",         re.IGNORECASE)),
     (OTHER, "PRICINGPRO",
-                      re.compile(r"(?<![A-Za-z0-9])(PRICINGPRO-\d+)", re.IGNORECASE)),
-    (OTHER, "JIRA",   re.compile(r"(?<![A-Za-z0-9])(?!(?:DCRTB|CMD|CTB)-)([A-Z][A-Z0-9]{2,14}-\d{1,7})(?![A-Za-z0-9])")),
+                         re.compile(r"(?<![A-Za-z0-9])(PRICINGPRO-\d+)",   re.IGNORECASE)),
+    (OTHER, "ASAPIO",    re.compile(r"(?<![A-Za-z0-9])(ASAPIO-\d+)",       re.IGNORECASE)),
+    (OTHER, "DRC",       re.compile(r"(?<![A-Za-z0-9])(DRC-\d+)",          re.IGNORECASE)),
+    (OTHER, "PHOENIX",   re.compile(r"(?<![A-Za-z0-9])(PHOENIX-\d+)",      re.IGNORECASE)),
+    (OTHER, "ESSRM",     re.compile(r"(?<![A-Za-z0-9])(ESSRM-\d+)",        re.IGNORECASE)),
+    (OTHER, "JIRA",      re.compile(r"(?<![A-Za-z0-9])(?!(?:DCRTB|CMD|CTB|CD1)-)([A-Z][A-Z0-9]{2,14}-\d{1,7})(?![A-Za-z0-9])")),
     (SNUM,  "S-NUM",  re.compile(r"(?<![A-Za-z0-9])(S\s?\d{10})",    re.IGNORECASE)),
 ]
 
@@ -72,14 +77,14 @@ class RevTracService:
             self.project_root
             / "data"
             / "revtrac"
-            / "EXPORT_20261016_Reference.XLSX"
+            / "EXPORT_20261026_Reference.XLSX"
         )
 
         self.transport_file = (
             self.project_root
             / "data"
             / "revtrac"
-            / "EXPORT_20261016_TR.XLSX"
+            / "EXPORT_20261026_TR.XLSX"
         )
 
         # Load both Excel files eagerly at startup so the first API

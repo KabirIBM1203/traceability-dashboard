@@ -1,6 +1,5 @@
-import { useMemo, useState, useCallback, memo } from "react";
+import { useMemo, useState, useCallback, memo, useRef, useEffect } from "react";
 
-import { getFeature } from "../services/api";
 import { useExcelExport } from "../hooks/useExcelExport";
 
 import type {
@@ -21,7 +20,7 @@ const PAGE_SIZE = 25;
 
 type SortKey = keyof Pick<
   Feature,
-  "issue_key" | "summary" | "status" | "stream" | "request_type" | "ritm" | "fix_version"
+  "issue_key" | "summary" | "status" | "stream" | "request_type" | "ritm" | "fix_version" | "opco"
 >;
 type SortDir = "asc" | "desc";
 
@@ -30,13 +29,19 @@ type SortDir = "asc" | "desc";
 // FeatureTable (top-level)
 // ---------------------------------------------------------------------------
 
+type TableMode = "feature" | "defect";
+
 interface FeatureTableProps {
   features: Feature[];
+  getDetailFn: (issueKey: string) => Promise<FeatureDetails>;
+  mode?: TableMode;
 }
 
 
 export default function FeatureTable({
   features,
+  getDetailFn,
+  mode = "feature",
 }: FeatureTableProps) {
 
   // ---- expand / load state ------------------------------------------------
@@ -54,9 +59,10 @@ export default function FeatureTable({
 
   // ---- search / filter state ----------------------------------------------
   const [search, setSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterStream, setFilterStream] = useState("");
-  const [filterFixVersion, setFilterFixVersion] = useState("");
+  const [filterStatus, setFilterStatus] = useState<Set<string>>(new Set());
+  const [filterStream, setFilterStream] = useState<Set<string>>(new Set());
+  const [filterFixVersion, setFilterFixVersion] = useState<Set<string>>(new Set());
+  const [filterOpco, setFilterOpco] = useState<Set<string>>(new Set());
 
   // ---- sort state ---------------------------------------------------------
   const [sortKey, setSortKey] = useState<SortKey>("issue_key");
@@ -77,13 +83,19 @@ export default function FeatureTable({
   );
   const fixVersionOptions = useMemo(
     () =>
-      uniqueSorted(
-        features.flatMap((f) =>
-          f.fix_version
-            ? f.fix_version.split(",").map((v) => v.trim())
-            : []
-        )
-      ),
+      mode === "feature"
+        ? uniqueSorted(
+            features.flatMap((f) =>
+              f.fix_version
+                ? f.fix_version.split(",").map((v) => v.trim())
+                : []
+            )
+          )
+        : [],
+    [features, mode]
+  );
+  const opcoOptions = useMemo(
+    () => uniqueSorted(features.map((f) => f.opco)),
     [features]
   );
 
@@ -93,14 +105,15 @@ export default function FeatureTable({
     const q = search.trim().toLowerCase();
 
     return features.filter((f) => {
-      if (filterStatus && f.status !== filterStatus) return false;
-      if (filterStream && f.stream !== filterStream) return false;
-      if (filterFixVersion) {
+      if (filterStatus.size > 0 && !filterStatus.has(f.status ?? "")) return false;
+      if (filterStream.size > 0 && !filterStream.has(f.stream ?? "")) return false;
+      if (mode === "feature" && filterFixVersion.size > 0) {
         const versions = f.fix_version
           ? f.fix_version.split(",").map((v) => v.trim())
           : [];
-        if (!versions.includes(filterFixVersion)) return false;
+        if (!versions.some((v) => filterFixVersion.has(v))) return false;
       }
+      if (filterOpco.size > 0 && !filterOpco.has(f.opco ?? "")) return false;
 
       if (q) {
         const haystack = [
@@ -111,6 +124,7 @@ export default function FeatureTable({
           f.status,
           f.fix_version,
           f.request_type,
+          f.opco,
         ]
           .filter(Boolean)
           .join(" ")
@@ -121,7 +135,7 @@ export default function FeatureTable({
 
       return true;
     });
-  }, [features, search, filterStatus, filterStream, filterFixVersion]);
+  }, [features, search, filterStatus, filterStream, filterFixVersion, filterOpco]);
 
 
   const sorted = useMemo(() => {
@@ -175,7 +189,7 @@ export default function FeatureTable({
 
       try {
         setLoadingFeature(issueKey);
-        const details = await getFeature(issueKey);
+        const details = await getDetailFn(issueKey);
         setDetailsCache((prev) => ({ ...prev, [issueKey]: details }));
       } catch (err) {
         console.error(`Failed to load ${issueKey}`, err);
@@ -189,12 +203,13 @@ export default function FeatureTable({
 
   const hasActiveFilters =
     search !== "" ||
-    filterStatus !== "" ||
-    filterStream !== "" ||
-    filterFixVersion !== "";
+    filterStatus.size > 0 ||
+    filterStream.size > 0 ||
+    (mode === "feature" && filterFixVersion.size > 0) ||
+    filterOpco.size > 0;
 
   // ---- excel export --------------------------------------------------------
-  const { exportToExcel, exporting } = useExcelExport(sorted, detailsCache);
+  const { exportToExcel, exporting } = useExcelExport(sorted, detailsCache, getDetailFn);
 
 
   // ---- render -------------------------------------------------------------
@@ -232,56 +247,45 @@ export default function FeatureTable({
             )}
           </div>
 
-          <select
-            className="filter-select"
-            value={filterStatus}
-            onChange={(e) => {
-              setFilterStatus(e.target.value);
-              handleFilterChange();
-            }}
-          >
-            <option value="">All Statuses</option>
-            {statusOptions.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
+          <MultiFilter
+            label="Status"
+            options={statusOptions}
+            selected={filterStatus}
+            onChange={(v) => { setFilterStatus(v); handleFilterChange(); }}
+          />
 
-          <select
-            className="filter-select"
-            value={filterStream}
-            onChange={(e) => {
-              setFilterStream(e.target.value);
-              handleFilterChange();
-            }}
-          >
-            <option value="">All Streams</option>
-            {streamOptions.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
+          <MultiFilter
+            label="Stream"
+            options={streamOptions}
+            selected={filterStream}
+            onChange={(v) => { setFilterStream(v); handleFilterChange(); }}
+          />
 
-          <select
-            className="filter-select"
-            value={filterFixVersion}
-            onChange={(e) => {
-              setFilterFixVersion(e.target.value);
-              handleFilterChange();
-            }}
-          >
-            <option value="">All Fix Versions</option>
-            {fixVersionOptions.map((fixVersion) => (
-              <option key={fixVersion} value={fixVersion}>{fixVersion}</option>
-            ))}
-          </select>
+          {mode === "feature" && (
+            <MultiFilter
+              label="Fix Version"
+              options={fixVersionOptions}
+              selected={filterFixVersion}
+              onChange={(v) => { setFilterFixVersion(v); handleFilterChange(); }}
+            />
+          )}
+
+          <MultiFilter
+            label="OpCo"
+            options={opcoOptions}
+            selected={filterOpco}
+            onChange={(v) => { setFilterOpco(v); handleFilterChange(); }}
+          />
 
           {hasActiveFilters && (
             <button
               className="clear-filters-btn"
               onClick={() => {
                 setSearch("");
-                setFilterStatus("");
-                setFilterStream("");
-                setFilterFixVersion("");
+                setFilterStatus(new Set());
+                setFilterStream(new Set());
+                setFilterFixVersion(new Set());
+                setFilterOpco(new Set());
                 setPage(1);
               }}
             >
@@ -340,16 +344,21 @@ export default function FeatureTable({
               <SortTh label="Summary"      col="summary"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="Status"       col="status"       sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortTh label="Stream"       col="stream"       sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortTh label="Request Type" col="request_type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortTh label="Fix Version"  col="fix_version"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              {mode === "feature" && (
+                <>
+                  <SortTh label="Request Type" col="request_type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortTh label="Fix Version"  col="fix_version"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                </>
+              )}
+              <SortTh label="OpCo"         col="opco"         sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
 
           <tbody>
             {pageSlice.length === 0 ? (
               <tr>
-                <td colSpan={8} className="empty-table-cell">
-                  No features match your search or filters.
+                <td colSpan={mode === "feature" ? 9 : 7} className="empty-table-cell">
+                  No items match your search or filters.
                 </td>
               </tr>
             ) : (
@@ -362,6 +371,7 @@ export default function FeatureTable({
                   loading={loadingFeature === feature.issue_key}
                   hasError={errorFeature === feature.issue_key}
                   onClick={() => handleFeatureClick(feature.issue_key)}
+                  mode={mode}
                 />
               ))
             )}
@@ -480,6 +490,7 @@ interface FeatureRowsProps {
   loading: boolean;
   hasError: boolean;
   onClick: () => void;
+  mode: TableMode;
 }
 
 const FeatureRows = memo(function FeatureRows({
@@ -489,6 +500,7 @@ const FeatureRows = memo(function FeatureRows({
   loading,
   hasError,
   onClick,
+  mode,
 }: FeatureRowsProps) {
 
   return (
@@ -528,16 +540,21 @@ const FeatureRows = memo(function FeatureRows({
 
         <td>{feature.stream || "—"}</td>
 
-        <td>{feature.request_type || "—"}</td>
+        {mode === "feature" && (
+          <>
+            <td>{feature.request_type || "—"}</td>
+            <td>{feature.fix_version || "—"}</td>
+          </>
+        )}
 
-        <td>{feature.fix_version || "—"}</td>
+        <td>{feature.opco || "—"}</td>
 
       </tr>
 
 
       {isExpanded && (
         <tr className="feature-detail-row">
-          <td colSpan={8}>
+          <td colSpan={mode === "feature" ? 9 : 7}>
 
             {loading && (
               <div className="inline-loading">
@@ -553,7 +570,7 @@ const FeatureRows = memo(function FeatureRows({
             )}
 
             {!loading && !hasError && details && (
-              <InlineFeatureDetails details={details} />
+              <InlineFeatureDetails details={details} mode={mode} />
             )}
 
           </td>
@@ -571,9 +588,10 @@ const FeatureRows = memo(function FeatureRows({
 
 interface InlineFeatureDetailsProps {
   details: FeatureDetails;
+  mode: TableMode;
 }
 
-function InlineFeatureDetails({ details }: InlineFeatureDetailsProps) {
+function InlineFeatureDetails({ details, mode }: InlineFeatureDetailsProps) {
   return (
     <div className="inline-details">
 
@@ -594,15 +612,19 @@ function InlineFeatureDetails({ details }: InlineFeatureDetailsProps) {
           <strong>{details.stream || "—"}</strong>
         </div>
 
-        <div className="inline-detail-item">
-          <span>Request Type</span>
-          <strong>{details.request_type || "—"}</strong>
-        </div>
+        {mode === "feature" && (
+          <>
+            <div className="inline-detail-item">
+              <span>Request Type</span>
+              <strong>{details.request_type || "—"}</strong>
+            </div>
 
-        <div className="inline-detail-item">
-          <span>Fix Version</span>
-          <strong>{details.fix_version || "—"}</strong>
-        </div>
+            <div className="inline-detail-item">
+              <span>Fix Version</span>
+              <strong>{details.fix_version || "—"}</strong>
+            </div>
+          </>
+        )}
 
       </div>
 
@@ -610,8 +632,10 @@ function InlineFeatureDetails({ details }: InlineFeatureDetailsProps) {
       {/* ── qTest Links ───────────────────────────────────────────── */}
       <QTestLinksSection links={details.qtest_links} />
 
-      {/* ── Release Artifacts ─────────────────────────────────────── */}
-      <ReleaseArtifactsSection artifacts={details.release_artifacts} />
+      {/* ── Release Artifacts — DCRTB only ────────────────────────── */}
+      {mode === "feature" && (
+        <ReleaseArtifactsSection artifacts={details.release_artifacts} />
+      )}
 
 
       <div className="revtrac-section-inline">
@@ -941,6 +965,82 @@ function RevTracCard({ revtrac }: RevTracCardProps) {
         </div>
       )}
 
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// MultiFilter — checkbox dropdown
+// ---------------------------------------------------------------------------
+
+interface MultiFilterProps {
+  label: string;
+  options: string[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}
+
+function MultiFilter({ label, options, selected, onChange }: MultiFilterProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  function toggle(value: string) {
+    const next = new Set(selected);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    onChange(next);
+  }
+
+  const count = selected.size;
+  const buttonLabel = count === 0 ? `All ${label}s` : `${label} (${count})`;
+
+  return (
+    <div className="mf-wrapper" ref={ref}>
+      <button
+        className={`mf-trigger${count > 0 ? " mf-trigger--active" : ""}`}
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
+        {buttonLabel}
+        <span className="mf-chevron">{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && options.length > 0 && (
+        <div className="mf-dropdown">
+          {options.map((opt) => (
+            <label key={opt} className="mf-option">
+              <input
+                type="checkbox"
+                checked={selected.has(opt)}
+                onChange={() => toggle(opt)}
+              />
+              <span>{opt}</span>
+            </label>
+          ))}
+          {count > 0 && (
+            <button
+              className="mf-clear"
+              onClick={() => onChange(new Set())}
+              type="button"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

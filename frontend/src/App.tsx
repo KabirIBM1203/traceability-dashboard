@@ -4,62 +4,104 @@ import FeatureTable from "./components/FeatureTable";
 import AiPanel from "./components/AiPanel";
 import TrLookupPanel from "./components/TrLookupPanel";
 
-import { getFeatures } from "./services/api";
+import { getFeatures, getFeature, getDefects, getDefect } from "./services/api";
 
-import type { Feature } from "./types/feature";
+import type { Feature, FeatureDetails } from "./types/feature";
 
+
+// ---------------------------------------------------------------------------
+// View definitions
+// ---------------------------------------------------------------------------
+
+type ViewId = "dcrtb" | "gsit" | "lsit";
+
+interface ViewConfig {
+  id: ViewId;
+  label: string;
+  pill: string;
+  heading: string;
+  mode: "feature" | "defect";
+  loadList: () => Promise<Feature[]>;
+  loadDetail: (issueKey: string) => Promise<FeatureDetails>;
+}
+
+const VIEWS: ViewConfig[] = [
+  {
+    id: "dcrtb",
+    label: "DCRTB",
+    pill: "DCRTB Features",
+    heading: "Features",
+    mode: "feature",
+    loadList: getFeatures,
+    loadDetail: getFeature,
+  },
+  {
+    id: "gsit",
+    label: "GSIT",
+    pill: "GSIT Defects (DBBT)",
+    heading: "GSIT Defects",
+    mode: "defect",
+    loadList: () => getDefects("DBBT"),
+    loadDetail: getDefect,
+  },
+  {
+    id: "lsit",
+    label: "LSIT",
+    pill: "LSIT Defects (DMD0)",
+    heading: "LSIT Defects",
+    mode: "defect",
+    loadList: () => getDefects("DMD0"),
+    loadDetail: getDefect,
+  },
+];
+
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
 
 function App() {
 
-  const [features, setFeatures] =
-    useState<Feature[]>([]);
+  const [activeView, setActiveView] = useState<ViewId>("dcrtb");
+  const [items, setItems]           = useState<Feature[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState<string | null>(null);
 
-  const [loading, setLoading] =
-    useState(true);
-
-  const [error, setError] =
-    useState<string | null>(null);
-
-  const [aiOpen, setAiOpen]   = useState(false);
-  const [trOpen, setTrOpen]   = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [trOpen, setTrOpen] = useState(false);
 
   const openAi  = useCallback(() => setAiOpen(true),  []);
   const closeAi = useCallback(() => setAiOpen(false), []);
   const openTr  = useCallback(() => setTrOpen(true),  []);
   const closeTr = useCallback(() => setTrOpen(false), []);
 
+  const view = VIEWS.find((v) => v.id === activeView)!;
 
+  // Load data whenever the active view changes
   useEffect(() => {
+    let cancelled = false;
 
-    async function loadFeatures() {
-
+    async function load() {
       try {
-
         setLoading(true);
         setError(null);
+        setItems([]);
 
-        const data = await getFeatures();
-
-        setFeatures(data);
+        const data = await view.loadList();
+        if (!cancelled) setItems(data);
 
       } catch (err) {
-
         console.error(err);
-
-        setError(
-          "Unable to load features. Make sure the backend is running."
-        );
-
+        if (!cancelled)
+          setError(`Unable to load ${view.heading}. Make sure the backend is running.`);
       } finally {
-
-        setLoading(false);
-
+        if (!cancelled) setLoading(false);
       }
     }
 
-    loadFeatures();
-
-  }, []);
+    load();
+    return () => { cancelled = true; };
+  }, [activeView]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   return (
@@ -89,10 +131,18 @@ function App() {
           </div>
         </div>
 
-        {/* Centre — environment pill */}
+        {/* Centre — view switcher dropdown */}
         <div className="header-center">
-          <span className="header-center-dot" />
-          <span className="header-center-label">DCRTB Features</span>
+          <select
+            className="view-select"
+            value={activeView}
+            onChange={(e) => setActiveView(e.target.value as ViewId)}
+            aria-label="Switch dashboard view"
+          >
+            {VIEWS.map((v) => (
+              <option key={v.id} value={v.id}>{v.pill}</option>
+            ))}
+          </select>
         </div>
 
         {/* Right — actions */}
@@ -122,14 +172,14 @@ function App() {
 
         <section className="dashboard-header">
           <div>
-            <h2>Features</h2>
+            <h2>{view.heading}</h2>
+            <span>{view.pill}</span>
           </div>
         </section>
 
-
         {loading && (
           <div className="message">
-            Loading features…
+            Loading {view.heading}…
           </div>
         )}
 
@@ -140,7 +190,12 @@ function App() {
         )}
 
         {!loading && !error && (
-          <FeatureTable features={features} />
+          <FeatureTable
+            key={activeView}
+            features={items}
+            getDetailFn={view.loadDetail}
+            mode={view.mode}
+          />
         )}
 
       </main>

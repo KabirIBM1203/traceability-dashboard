@@ -9,5 +9,6 @@ WHERE UPPER(parent.key) = UPPER(?)
   AND (
         UPPER(child.key) LIKE 'CTB%'
         OR UPPER(child.key) LIKE 'CMD%'
+        OR UPPER(child.key) LIKE 'CD1%'
       )
 ORDER BY child.key;

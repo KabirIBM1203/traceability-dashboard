@@ -77,15 +77,10 @@ SELECT
         THEN fld.field_value
     END) AS request_type,
 
-    MAX(CASE
-        WHEN fld.field_name = 'Requesting OpCo'
-        THEN fld.field_value
-    END) AS requesting_opco,
-
-    MAX(CASE
-        WHEN fld.field_name = 'OpCo impacted'
-        THEN fld.field_value
-    END) AS opco_impacted,
+    COALESCE(
+        MAX(CASE WHEN fld.field_name = 'OpCo impacted'   THEN fld.field_value END),
+        MAX(CASE WHEN fld.field_name = 'Requesting OpCo' THEN fld.field_value END)
+    ) AS opco,
 
     MAX(CASE
         WHEN fld.field_name = 'RevTrac Request'

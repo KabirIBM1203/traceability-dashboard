@@ -28,6 +28,7 @@ export interface Feature {
   stream: string | null;
   request_type: string | null;
   fix_version: string | null;
+  opco: string | null;
 }
 
 // ---------------------------------------------------------------------------
