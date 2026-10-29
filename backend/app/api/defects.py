@@ -16,20 +16,20 @@ RevTrac matching strategy for defects:
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.models.feature import Feature
-from app.services.databricks_service import DatabricksService
-from app.services.revtrac_service import RevTracService
+from app.api.auth import require_login
+from app.services.registry import db_service as _db_service
+from app.services.registry import revtrac_service as _revtrac_service
 
 
 router = APIRouter(
     prefix="/api/defects",
     tags=["Defects"],
+    dependencies=[Depends(require_login)],
 )
 
-_db_service = DatabricksService()
-_revtrac_service = RevTracService()
 _executor = ThreadPoolExecutor(max_workers=8)
 
 # Allowed project keys for the list endpoint

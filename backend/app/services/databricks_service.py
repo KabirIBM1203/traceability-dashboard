@@ -1,9 +1,14 @@
 import re
+import threading
 from pathlib import Path
 
 from databricks import sql
 
 from app.core.config import SERVER_HOSTNAME, HTTP_PATH
+
+
+class DatabricksNotConnected(Exception):
+    """Raised by data calls made before the user signed in to Databricks."""
 
 
 # ---------------------------------------------------------------------------
@@ -58,20 +63,39 @@ def _classify_attachment(filename: str | None, label: str | None) -> list[str]:
 class DatabricksService:
 
     def __init__(self):
-        # Establish the connection once and reuse it across all
-        # requests so that the OAuth handshake (browser popup) only
-        # happens a single time at startup rather than on every call.
-        self._connection = sql.connect(
-            server_hostname=SERVER_HOSTNAME,
-            http_path=HTTP_PATH,
-            auth_type="databricks-oauth",
-        )
+        # Nothing connects at import/startup. The user signs in from the
+        # login page, which calls connect(); the connection is then reused
+        # for every request (the OAuth browser popup happens only once).
+        self._connection = None
+        self._lock = threading.Lock()
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connection is not None
+
+    def connect(self):
+        """Open the Databricks connection (OAuth browser sign-in). Idempotent."""
+        with self._lock:
+            if self._connection is None:
+                if not SERVER_HOSTNAME or not HTTP_PATH:
+                    raise ValueError(
+                        "DATABRICKS_SERVER_HOSTNAME and DATABRICKS_HTTP_PATH "
+                        "must be set in backend/.env"
+                    )
+                self._connection = sql.connect(
+                    server_hostname=SERVER_HOSTNAME,
+                    http_path=HTTP_PATH,
+                    auth_type="databricks-oauth",
+                )
+            return self._connection
 
     def get_connection(self):
+        if self._connection is None:
+            raise DatabricksNotConnected("Databricks login required")
         return self._connection
 
     def test_connection(self):
-        with self._connection.cursor() as cursor:
+        with self.get_connection().cursor() as cursor:
             cursor.execute("SELECT CURRENT_TIMESTAMP()")
             return cursor.fetchall()
 
@@ -85,7 +109,7 @@ class DatabricksService:
 
         query = sql_file.read_text(encoding="utf-8")
 
-        with self._connection.cursor() as cursor:
+        with self.get_connection().cursor() as cursor:
 
             cursor.execute(query)
 
@@ -111,7 +135,7 @@ class DatabricksService:
 
         query = sql_file.read_text(encoding="utf-8")
 
-        with self._connection.cursor() as cursor:
+        with self.get_connection().cursor() as cursor:
 
             cursor.execute(
                 query,
@@ -140,7 +164,7 @@ class DatabricksService:
 
         query = sql_file.read_text(encoding="utf-8")
 
-        with self._connection.cursor() as cursor:
+        with self.get_connection().cursor() as cursor:
 
             cursor.execute(
                 query,
@@ -174,7 +198,7 @@ class DatabricksService:
 
         query = sql_file.read_text(encoding="utf-8")
 
-        with self._connection.cursor() as cursor:
+        with self.get_connection().cursor() as cursor:
 
             cursor.execute(query, (issue_key,))
 
@@ -257,7 +281,7 @@ class DatabricksService:
                 "__TOKENS__", ", ".join(["?"] * len(chunk))
             )
 
-            with self._connection.cursor() as cursor:
+            with self.get_connection().cursor() as cursor:
 
                 cursor.execute(query, tuple(chunk))
 
@@ -304,7 +328,7 @@ class DatabricksService:
         template = sql_file.read_text(encoding="utf-8")
         query = template.replace("__PROJECT_KEY__", project_key.upper())
 
-        with self._connection.cursor() as cursor:
+        with self.get_connection().cursor() as cursor:
             cursor.execute(query)
             rows = cursor.fetchall()
             columns = [column[0] for column in cursor.description]
@@ -322,7 +346,7 @@ class DatabricksService:
         )
         query = sql_file.read_text(encoding="utf-8")
 
-        with self._connection.cursor() as cursor:
+        with self.get_connection().cursor() as cursor:
             cursor.execute(query, (issue_key,))
             row = cursor.fetchone()
             if row is None:
@@ -342,7 +366,7 @@ class DatabricksService:
         )
         query = sql_file.read_text(encoding="utf-8")
 
-        with self._connection.cursor() as cursor:
+        with self.get_connection().cursor() as cursor:
             cursor.execute(query, (issue_key,))
             rows = cursor.fetchall()
 
@@ -362,7 +386,7 @@ class DatabricksService:
 
         query = sql_file.read_text(encoding="utf-8")
 
-        with self._connection.cursor() as cursor:
+        with self.get_connection().cursor() as cursor:
 
             cursor.execute(query, (issue_key,))
 

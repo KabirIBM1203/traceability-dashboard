@@ -46,15 +46,17 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 
-from app.api.features import db_service, revtrac_service
+from app.api.auth import require_login
+from app.services.registry import db_service, revtrac_service
 from app.services.revtrac_service import OTHER, RITM, SNUM, STORY, extract_tickets
 
 
 router = APIRouter(
     prefix="/api/tr-lookup",
     tags=["TR Lookup"],
+    dependencies=[Depends(require_login)],
 )
 
 _executor = ThreadPoolExecutor(max_workers=2)

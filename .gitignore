@@ -19,3 +19,5 @@ venv/
 # Data
 data/*.xlsx
 data/*.csv
+# Uploaded RevTrac exports + upload history (local to each user)
+data/store/

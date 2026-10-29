@@ -1,21 +1,19 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.auth import require_login
 from app.models.feature import Feature
-from app.services.databricks_service import DatabricksService
-from app.services.revtrac_service import RevTracService
+from app.services.registry import db_service, revtrac_service
 
 
 router = APIRouter(
     prefix="/api/features",
-    tags=["Features"]
+    tags=["Features"],
+    dependencies=[Depends(require_login)],
 )
 
-
-db_service = DatabricksService()
-revtrac_service = RevTracService()
 
 # Single shared thread pool for all blocking DB / file-IO calls.
 _executor = ThreadPoolExecutor(max_workers=8)

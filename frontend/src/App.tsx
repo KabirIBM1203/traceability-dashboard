@@ -3,8 +3,12 @@ import { useCallback, useEffect, useState } from "react";
 import FeatureTable from "./components/FeatureTable";
 import AiPanel from "./components/AiPanel";
 import TrLookupPanel from "./components/TrLookupPanel";
+import LoginPage from "./components/LoginPage";
+import RevTracPanel from "./components/RevTracPanel";
 
-import { getFeatures, getFeature, getDefects, getDefect } from "./services/api";
+import {
+  getFeatures, getFeature, getDefects, getDefect, getAuthStatus,
+} from "./services/api";
 
 import type { Feature, FeatureDetails } from "./types/feature";
 
@@ -60,7 +64,12 @@ const VIEWS: ViewConfig[] = [
 // App
 // ---------------------------------------------------------------------------
 
-function App() {
+function Dashboard() {
+
+  // Bumped after every RevTrac upload: remounts the table so cached detail
+  // rows (which embed RevTrac data) are re-fetched.
+  const [dataVersion, setDataVersion] = useState(0);
+  const onUploaded = useCallback(() => setDataVersion((v) => v + 1), []);
 
   const [activeView, setActiveView] = useState<ViewId>("dcrtb");
   const [items, setItems]           = useState<Feature[]>([]);
@@ -177,6 +186,8 @@ function App() {
           </div>
         </section>
 
+        <RevTracPanel onUploaded={onUploaded} />
+
         {loading && (
           <div className="message">
             Loading {view.heading}…
@@ -191,7 +202,7 @@ function App() {
 
         {!loading && !error && (
           <FeatureTable
-            key={activeView}
+            key={`${activeView}-${dataVersion}`}
             features={items}
             getDetailFn={view.loadDetail}
             mode={view.mode}
@@ -206,6 +217,40 @@ function App() {
     </div>
 
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// App - Databricks login gate in front of the dashboard
+// ---------------------------------------------------------------------------
+
+function App() {
+
+  const [auth, setAuth] = useState<"checking" | "out" | "in">("checking");
+  const onLoggedIn = useCallback(() => setAuth("in"), []);
+
+  useEffect(() => {
+    getAuthStatus()
+      .then((s) => setAuth(s.connected ? "in" : "out"))
+      .catch(() => setAuth("out"));
+
+    // The API client fires this on any 401 (session lost / backend restarted)
+    const onAuthRequired = () => setAuth("out");
+    window.addEventListener("auth-required", onAuthRequired);
+    return () => window.removeEventListener("auth-required", onAuthRequired);
+  }, []);
+
+  if (auth === "checking") {
+    return (
+      <div className="login-page">
+        <div className="message">Connecting…</div>
+      </div>
+    );
+  }
+
+  if (auth === "out") return <LoginPage onLoggedIn={onLoggedIn} />;
+
+  return <Dashboard />;
 }
 
 

@@ -3,6 +3,19 @@ import re
 
 import pandas as pd
 
+from app.services.data_store import REFERENCE_FILE, TRANSPORT_FILE
+
+# Columns the code relies on; uploads are validated against these.
+REFERENCE_COLUMNS = [
+    "Rev-Trac request", "Project", "Request type", "Class", "Team",
+    "Status", "Title", "Ref Type", "Ref Value", "Ref Text",
+]
+TRANSPORT_COLUMNS = [
+    "Rev-Trac request", "Project", "Request type", "Class", "Team",
+    "Status", "Title", "Sequence", "Transport number", "Category",
+    "Short text", "Last changed by", "Release Date", "Release Time",
+]
+
 
 # ---------------------------------------------------------------------------
 # Ticket-extraction patterns, grouped in tiers (highest preference first)
@@ -66,31 +79,45 @@ def extract_tickets(
 class RevTracService:
 
     def __init__(self):
-        # revtrac_service.py
-        # -> services
-        # -> app
-        # -> backend
-        # -> traceability-dashboard
-        self.project_root = Path(__file__).resolve().parents[3]
+        # The data comes from the files the user uploaded on the main page
+        # (persisted under data/store). With no upload yet the frames are
+        # empty and every lookup simply returns "nothing found".
+        self.reload()
 
-        self.reference_file = (
-            self.project_root
-            / "data"
-            / "revtrac"
-            / "EXPORT_20261026_Reference.XLSX"
+    @property
+    def has_data(self) -> bool:
+        return not (self._reference_df.empty and self._transport_df.empty)
+
+    @property
+    def reference_df(self) -> pd.DataFrame:
+        return self._reference_df
+
+    @property
+    def transport_df(self) -> pd.DataFrame:
+        return self._transport_df
+
+    def reload(self) -> None:
+        """(Re)load both frames from the stored uploads and rebuild indexes."""
+        self.replace(
+            self.parse_reference(REFERENCE_FILE) if REFERENCE_FILE.exists() else None,
+            self.parse_transports(TRANSPORT_FILE) if TRANSPORT_FILE.exists() else None,
         )
 
-        self.transport_file = (
-            self.project_root
-            / "data"
-            / "revtrac"
-            / "EXPORT_20261026_TR.XLSX"
+    def replace(
+        self,
+        reference_df: pd.DataFrame | None,
+        transport_df: pd.DataFrame | None,
+    ) -> None:
+        """Swap in parsed frames (None = empty) and rebuild the hash indexes."""
+        ref = reference_df if reference_df is not None else self._empty(
+            REFERENCE_COLUMNS
+        )
+        tr = transport_df if transport_df is not None else self._empty(
+            TRANSPORT_COLUMNS
         )
 
-        # Load both Excel files eagerly at startup so the first API
-        # request pays no cold-start penalty from pd.read_excel().
-        self._reference_df = self._read_reference()
-        self._transport_df = self._read_transports()
+        self._reference_df = ref
+        self._transport_df = tr
 
         # Hash indexes for TR lookups (O(1) per TR instead of a full
         # column scan per TR).
@@ -98,11 +125,28 @@ class RevTracService:
         self._ref_values_by_revtrac = self._build_ref_index()
 
     # ------------------------------------------------------------------
-    # Internal readers (called once at __init__ time)
+    # Parsing (also used to validate an upload before it is stored)
     # ------------------------------------------------------------------
 
-    def _read_reference(self) -> pd.DataFrame:
-        df = pd.read_excel(self.reference_file, sheet_name="Sheet1")
+    @classmethod
+    def _empty(cls, columns: list[str]) -> pd.DataFrame:
+        df = pd.DataFrame(columns=columns)
+        df["_revtrac_key"] = pd.Series(dtype=object)
+        return df
+
+    @staticmethod
+    def _require(df: pd.DataFrame, columns: list[str], label: str) -> None:
+        missing = [c for c in columns if c not in df.columns]
+        if missing:
+            raise ValueError(
+                f"{label}: missing column(s) {missing}. "
+                f"Found: {list(df.columns)}"
+            )
+
+    @classmethod
+    def parse_reference(cls, source) -> pd.DataFrame:
+        df = pd.read_excel(source, sheet_name=0)
+        cls._require(df, REFERENCE_COLUMNS, "RevTrac references file")
         df["Ref Value"] = (
             df["Ref Value"]
             .fillna("")
@@ -111,14 +155,16 @@ class RevTracService:
             .str.upper()
         )
         df["_revtrac_key"] = df["Rev-Trac request"].apply(
-            self._normalize_revtrac_number
+            cls._normalize_revtrac_number
         )
         return df
 
-    def _read_transports(self) -> pd.DataFrame:
-        df = pd.read_excel(self.transport_file, sheet_name="Sheet1")
+    @classmethod
+    def parse_transports(cls, source) -> pd.DataFrame:
+        df = pd.read_excel(source, sheet_name=0)
+        cls._require(df, TRANSPORT_COLUMNS, "TR list file")
         df["_revtrac_key"] = df["Rev-Trac request"].apply(
-            self._normalize_revtrac_number
+            cls._normalize_revtrac_number
         )
         return df
 

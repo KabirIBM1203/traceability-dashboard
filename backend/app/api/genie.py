@@ -15,9 +15,10 @@ POST /api/genie/followup
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.api.auth import require_login
 from app.services.genie_service import GenieService
 from app.core.config import GENIE_SPACE_ID
 
@@ -25,6 +26,7 @@ from app.core.config import GENIE_SPACE_ID
 router = APIRouter(
     prefix="/api/genie",
     tags=["Genie AI"],
+    dependencies=[Depends(require_login)],
 )
 
 _genie = GenieService()
